@@ -24,9 +24,11 @@ Training_Segmentation/
 │       ├── fluor_raw/
 │       └── fluor_labels/
 ├── src/
-│   ├── pipeline.py             # Main orchestration script
+│   ├── gui.py                  # Tkinter GUI application
+│   ├── pipeline.py             # Main orchestration script (CLI)
 │   ├── train_cellpose.py       # Cellpose training module
 │   ├── evaluate.py             # Evaluation and inference
+│   ├── rename_files.py         # File renaming utility
 │   └── data_preparation.py     # Data loading and augmentation
 ├── models/                     # Saved trained models
 ├── results/                    # Outputs, metrics, overlays
@@ -39,6 +41,43 @@ Training_Segmentation/
 pip install -r requirements.txt
 ```
 
+## GUI
+
+Launch the graphical interface:
+
+```bash
+cd src/
+python gui.py
+```
+
+The GUI has four tabs:
+
+| Tab | Function |
+|-----|----------|
+| **File Renaming** | Batch rename images/masks to the pipeline naming convention (`<prefix>NNN_img.tif` / `<prefix>NNN_masks.tif`). Supports preview, in-place rename, and copy-to-output-dir modes. |
+| **Configuration** | Load/edit/save YAML configs with preset buttons for DIC and fluorescence tasks. |
+| **Training** | Launch and monitor Cellpose model training with live log output. |
+| **Evaluation** | Run inference on new images and compute metrics (mAP, IoU, Dice). |
+
+## File Renaming
+
+The pipeline requires files named `<prefix><NNN>_img.<ext>` for images and `<prefix><NNN>_masks.<ext>` for masks. Use either the GUI or the CLI tool to rename your files:
+
+```bash
+cd src/
+
+# Preview renames (dry run)
+python rename_files.py --image-dir /path/to/images --mask-dir /path/to/masks --prefix dic_ --dry-run
+
+# Rename in place
+python rename_files.py --image-dir /path/to/images --mask-dir /path/to/masks --prefix dic_ --ext .tif
+
+# Copy to pipeline data directories instead of renaming
+python rename_files.py --image-dir /path/to/images --mask-dir /path/to/masks \
+    --prefix dic_ --ext .tif --copy \
+    --image-output ../data/train/dic_raw --mask-output ../data/train/dic_labels
+```
+
 ## Data Preparation
 
 Place your images and masks in the `data/` directories following the naming convention:
@@ -48,7 +87,7 @@ Place your images and masks in the `data/` directories following the naming conv
 
 The naming filters are configurable in the YAML configs (`IMAGE_FILTER`, `MASK_FILTER`).
 
-## Usage
+## CLI Usage
 
 ```bash
 cd src/
