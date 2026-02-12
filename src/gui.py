@@ -59,9 +59,9 @@ class SegmentationGUI(tk.Tk):
         # Thread-safe log queue
         self.log_queue: queue.Queue[str] = queue.Queue()
 
-        # Currently loaded config
-        self.config: dict = {}
-        self.config_path: str = ""
+        # Currently loaded YAML config (named to avoid shadowing tk.Tk.config)
+        self.yaml_config: dict = {}
+        self.yaml_config_path: str = ""
 
         self._build_menu()
         self._build_tabs()
@@ -412,8 +412,8 @@ class SegmentationGUI(tk.Tk):
     def _load_config_file(self, path: str):
         try:
             with open(path) as f:
-                self.config = yaml.safe_load(f)
-            self.config_path = path
+                self.yaml_config = yaml.safe_load(f)
+            self.yaml_config_path = path
             self.cfg_path_var.set(path)
             self._populate_param_editor()
             logger.info(f"Loaded config: {path}")
@@ -462,7 +462,7 @@ class SegmentationGUI(tk.Tk):
         self, section: str, start_row: int, fields: list[tuple[str, str, str]]
     ) -> int:
         """Add a section header and its parameter fields."""
-        cfg_section = self.config.get(section, {})
+        cfg_section = self.yaml_config.get(section, {})
 
         ttk.Label(
             self.param_inner,
@@ -506,7 +506,7 @@ class SegmentationGUI(tk.Tk):
         return row
 
     def _read_params_into_config(self):
-        """Read GUI parameter values back into self.config."""
+        """Read GUI parameter values back into self.yaml_config."""
         type_map = {
             "TRAIN.EPOCHS": int,
             "TRAIN.BATCH_SIZE": int,
@@ -541,18 +541,18 @@ class SegmentationGUI(tk.Tk):
             else:
                 val = raw
 
-            if section not in self.config:
-                self.config[section] = {}
-            self.config[section][key] = val
+            if section not in self.yaml_config:
+                self.yaml_config[section] = {}
+            self.yaml_config[section][key] = val
 
     def _save_config(self):
-        if not self.config:
+        if not self.yaml_config:
             messagebox.showwarning("No Config", "Load a config first.")
             return
 
         self._read_params_into_config()
 
-        path = self.config_path or filedialog.asksaveasfilename(
+        path = self.yaml_config_path or filedialog.asksaveasfilename(
             title="Save Configuration",
             filetypes=[("YAML", "*.yaml")],
             initialdir=str(PROJECT_ROOT / "configs"),
@@ -563,8 +563,8 @@ class SegmentationGUI(tk.Tk):
 
         try:
             with open(path, "w") as f:
-                yaml.dump(self.config, f, default_flow_style=False, sort_keys=False)
-            self.config_path = path
+                yaml.dump(self.yaml_config, f, default_flow_style=False, sort_keys=False)
+            self.yaml_config_path = path
             self.cfg_path_var.set(path)
             logger.info(f"Config saved to {path}")
             messagebox.showinfo("Saved", f"Configuration saved to:\n{path}")
@@ -624,7 +624,7 @@ class SegmentationGUI(tk.Tk):
     def _start_training(self):
         task = self.train_task.get()
 
-        if task == "custom" and not self.config:
+        if task == "custom" and not self.yaml_config:
             messagebox.showwarning(
                 "No Config", "Load a config in the Configuration tab first."
             )
@@ -661,7 +661,7 @@ class SegmentationGUI(tk.Tk):
             elif task == "custom":
                 # Use config from GUI editor
                 self._read_params_into_config()
-                configs_to_run.append(self.config_path)
+                configs_to_run.append(self.yaml_config_path)
 
             for cfg_path in configs_to_run:
                 if self._stop_event.is_set():
@@ -821,7 +821,7 @@ class SegmentationGUI(tk.Tk):
         if not model:
             messagebox.showwarning("Missing", "Select a trained model.")
             return
-        if not self.config:
+        if not self.yaml_config:
             messagebox.showwarning(
                 "No Config", "Load a config in the Configuration tab first."
             )
@@ -835,7 +835,7 @@ class SegmentationGUI(tk.Tk):
             try:
                 from evaluate import evaluate_model
                 self._read_params_into_config()
-                results = evaluate_model(self.config, model)
+                results = evaluate_model(self.yaml_config, model)
                 msg = "Full Evaluation Results:\n\n"
                 for k, v in results.items():
                     if not isinstance(v, (list, dict)):
