@@ -25,9 +25,18 @@ DATA:
     IMAGE_FILTER: "_img"
     MASK_FILTER: "_masks"
   PATCH_SIZE: [256, 256]
-  # Channel 0 = grayscale for single-channel fluorescence
-  # For multi-channel: [1,0] = red cytoplasm, no nucleus; [2,3] = green cyto, blue nuclei
-  CHANNELS: [0, 0]
+  # Channel reference for this dataset:
+  #   0 = DIC (brightfield)
+  #   1 = mEGFP
+  #   2 = mScarlet
+  #   3 = miRFPnano3 (not present in every image)
+  #
+  # CHANNELS: [segment_channel, nuclear_channel]
+  #   For nucleus segmentation from mEGFP: [1, 0]
+  #   For nucleus segmentation from mScarlet: [2, 0]
+  #   For nucleus segmentation from miRFPnano3: [3, 0]
+  #   Use [0, 0] if images are single-channel (already extracted)
+  CHANNELS: [1, 0]
   NORMALIZE: true
 
 AUGMENTATION:

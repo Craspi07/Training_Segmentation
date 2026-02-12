@@ -368,6 +368,44 @@ class SegmentationGUI(tk.Tk):
             command=lambda: self._load_preset("fluor"),
         ).pack(side=tk.LEFT, padx=5)
 
+        # ---- Model selection ----
+        model_frame = ttk.LabelFrame(tab, text="Model", padding=10)
+        model_frame.pack(fill=tk.X, padx=10, pady=(10, 0))
+
+        ttk.Label(model_frame, text="Pretrained Model:").grid(
+            row=0, column=0, sticky=tk.W, pady=2
+        )
+        self.model_source_var = tk.StringVar(value="cpsam (default)")
+        model_combo = ttk.Combobox(
+            model_frame,
+            textvariable=self.model_source_var,
+            values=["cpsam (default)", "Custom model..."],
+            width=25,
+            state="readonly",
+        )
+        model_combo.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
+        model_combo.bind("<<ComboboxSelected>>", self._on_model_source_changed)
+
+        self.custom_model_path_var = tk.StringVar()
+        self.custom_model_entry = ttk.Entry(
+            model_frame, textvariable=self.custom_model_path_var, width=40
+        )
+        self.custom_model_entry.grid(row=0, column=2, padx=5, pady=2)
+        self.custom_model_entry.config(state=tk.DISABLED)
+
+        self.custom_model_btn = ttk.Button(
+            model_frame, text="Browse...", command=self._browse_custom_model
+        )
+        self.custom_model_btn.grid(row=0, column=3, pady=2)
+        self.custom_model_btn.config(state=tk.DISABLED)
+
+        self.model_info_var = tk.StringVar(
+            value="Using built-in Cellpose-SAM (cpsam) model"
+        )
+        ttk.Label(
+            model_frame, textvariable=self.model_info_var, foreground="gray"
+        ).grid(row=1, column=0, columnspan=4, sticky=tk.W, pady=(2, 0))
+
         # Scrolled parameter editor
         param_frame = ttk.LabelFrame(tab, text="Parameters", padding=10)
         param_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -416,9 +454,62 @@ class SegmentationGUI(tk.Tk):
             self.yaml_config_path = path
             self.cfg_path_var.set(path)
             self._populate_param_editor()
+            self._sync_model_selector_from_config()
             logger.info(f"Loaded config: {path}")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load config:\n{e}")
+
+    def _on_model_source_changed(self, event=None):
+        """Toggle custom model path entry based on dropdown selection."""
+        choice = self.model_source_var.get()
+        if choice == "Custom model...":
+            self.custom_model_entry.config(state=tk.NORMAL)
+            self.custom_model_btn.config(state=tk.NORMAL)
+            self.model_info_var.set("Select a custom model file below")
+        else:
+            self.custom_model_entry.config(state=tk.DISABLED)
+            self.custom_model_btn.config(state=tk.DISABLED)
+            self.custom_model_path_var.set("")
+            self.model_info_var.set("Using built-in Cellpose-SAM (cpsam) model")
+            # Update config to use default
+            if self.yaml_config and "MODEL" in self.yaml_config:
+                self.yaml_config["MODEL"]["PRETRAINED_MODEL"] = None
+
+    def _browse_custom_model(self):
+        """Browse for a custom Cellpose model file."""
+        path = filedialog.askopenfilename(
+            title="Select Cellpose Model",
+            initialdir=str(PROJECT_ROOT / "models"),
+        )
+        if path:
+            self.custom_model_path_var.set(path)
+            model_name = Path(path).name
+            self.model_info_var.set(f"Custom model: {model_name}")
+            # Update config
+            if self.yaml_config:
+                if "MODEL" not in self.yaml_config:
+                    self.yaml_config["MODEL"] = {}
+                self.yaml_config["MODEL"]["PRETRAINED_MODEL"] = path
+            logger.info(f"Custom model selected: {path}")
+
+    def _sync_model_selector_from_config(self):
+        """Update model selector widgets to reflect the loaded config."""
+        if not self.yaml_config:
+            return
+        model_cfg = self.yaml_config.get("MODEL", {})
+        pretrained = model_cfg.get("PRETRAINED_MODEL")
+        if pretrained:
+            self.model_source_var.set("Custom model...")
+            self.custom_model_path_var.set(str(pretrained))
+            self.custom_model_entry.config(state=tk.NORMAL)
+            self.custom_model_btn.config(state=tk.NORMAL)
+            self.model_info_var.set(f"Custom model: {Path(str(pretrained)).name}")
+        else:
+            self.model_source_var.set("cpsam (default)")
+            self.custom_model_path_var.set("")
+            self.custom_model_entry.config(state=tk.DISABLED)
+            self.custom_model_btn.config(state=tk.DISABLED)
+            self.model_info_var.set("Using built-in Cellpose-SAM (cpsam) model")
 
     def _populate_param_editor(self):
         """Build parameter widgets from the loaded config."""
@@ -438,7 +529,7 @@ class SegmentationGUI(tk.Tk):
         ])
 
         row = self._add_section("DATA", row, [
-            ("CHANNELS", "Channels [chan1, chan2]", "str"),
+            ("CHANNELS", "Channels [segment, nuclear]  (0=DIC, 1=mEGFP, 2=mScarlet, 3=miRFPnano3)", "str"),
         ])
 
         row = self._add_section("INFERENCE", row, [
@@ -507,6 +598,16 @@ class SegmentationGUI(tk.Tk):
 
     def _read_params_into_config(self):
         """Read GUI parameter values back into self.yaml_config."""
+        # Sync model selection
+        if self.yaml_config:
+            if "MODEL" not in self.yaml_config:
+                self.yaml_config["MODEL"] = {}
+            if self.model_source_var.get() == "Custom model...":
+                custom_path = self.custom_model_path_var.get()
+                self.yaml_config["MODEL"]["PRETRAINED_MODEL"] = custom_path if custom_path else None
+            else:
+                self.yaml_config["MODEL"]["PRETRAINED_MODEL"] = None
+
         type_map = {
             "TRAIN.EPOCHS": int,
             "TRAIN.BATCH_SIZE": int,

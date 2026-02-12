@@ -121,11 +121,21 @@ Each YAML config follows BiaPy conventions and controls:
 | `INFERENCE` | Diameter, flow threshold, cell probability threshold |
 | `PATHS` | Model save directory, results directory, model name |
 
-### Channel Configuration
+### Channel Reference
 
-- **DIC/Brightfield (grayscale):** `CHANNELS: [0, 0]`
-- **Fluorescence (single channel):** `CHANNELS: [0, 0]`
-- **Multi-channel (e.g., green cyto + blue nuclei):** `CHANNELS: [2, 3]`
+| Channel | Source |
+|---------|--------|
+| 0 | DIC (brightfield) |
+| 1 | mEGFP |
+| 2 | mScarlet |
+| 3 | miRFPnano3 (not present in every image) |
+
+`CHANNELS: [segment_channel, nuclear_channel]` — first value is the channel to segment, second is an optional nuclear helper (0 = none).
+
+- **DIC whole-cell segmentation:** `CHANNELS: [0, 0]` — segment DIC, no nuclear channel
+- **Nucleus from mEGFP:** `CHANNELS: [1, 0]` — segment mEGFP channel
+- **Nucleus from mScarlet:** `CHANNELS: [2, 0]` — segment mScarlet channel
+- **Nucleus from miRFPnano3:** `CHANNELS: [3, 0]` — segment miRFPnano3 channel
 
 ## Pipeline Stages
 

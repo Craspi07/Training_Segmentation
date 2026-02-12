@@ -26,7 +26,16 @@ DATA:
     IMAGE_FILTER: "_img"
     MASK_FILTER: "_masks"
   PATCH_SIZE: [256, 256]
-  CHANNELS: [0, 0]  # Grayscale: no cytoplasm/nucleus channel distinction
+  # Channel reference for this dataset:
+  #   0 = DIC (brightfield)
+  #   1 = mEGFP
+  #   2 = mScarlet
+  #   3 = miRFPnano3 (not present in every image)
+  #
+  # CHANNELS: [segment_channel, nuclear_channel]
+  #   First value  = channel to segment (0=DIC for whole-cell)
+  #   Second value = optional nuclear helper channel (0=none)
+  CHANNELS: [0, 0]
   NORMALIZE: true
 
 AUGMENTATION:
