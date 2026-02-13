@@ -33,6 +33,94 @@ def load_config(config_path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def resolve_pretrained_model(model_spec: str | None) -> str | None:
+    """Resolve a pretrained model specification to a local file path.
+
+    Supported formats for *model_spec*:
+
+    * ``None`` / ``"null"`` — use the Cellpose default (cpsam).
+    * A local file path (``/path/to/model``) — used directly.
+    * A BioImage.io identifier or path:
+      - ``"bioimage.io:<resource-id>"`` e.g. ``"bioimage.io:affable-shark"``
+      - A path to a ``rdf.yaml`` / ``bioimageio.yaml`` file
+      - A path to a BioImage.io ``.zip`` package
+
+    For BioImage.io sources the function loads the model description,
+    locates the ``pytorch_state_dict`` weights, and returns their local
+    path so that Cellpose can load them with ``pretrained_model=``.
+
+    Returns:
+        Local path to model weights, or *None* for the Cellpose default.
+    """
+    if model_spec is None or str(model_spec).lower() in ("null", "none", ""):
+        return None
+
+    model_spec = str(model_spec).strip()
+
+    # -- BioImage.io identifier (prefix) --
+    if model_spec.startswith("bioimage.io:"):
+        resource_id = model_spec[len("bioimage.io:"):]
+        return _load_bioimageio_weights(resource_id)
+
+    # -- BioImage.io YAML or ZIP file --
+    spec_path = Path(model_spec)
+    if spec_path.is_file() and spec_path.suffix.lower() in (".yaml", ".yml", ".zip"):
+        name = spec_path.name.lower()
+        if name in ("rdf.yaml", "bioimageio.yaml") or name.endswith(".zip"):
+            return _load_bioimageio_weights(str(spec_path))
+        # Check if it looks like a bioimageio yaml (contains 'format_version')
+        if spec_path.suffix.lower() in (".yaml", ".yml"):
+            try:
+                with open(spec_path) as fh:
+                    header = fh.read(512)
+                if "format_version" in header and "weights" in header:
+                    return _load_bioimageio_weights(str(spec_path))
+            except Exception:
+                pass
+
+    # -- Plain local model path --
+    return model_spec
+
+
+def _load_bioimageio_weights(source: str) -> str:
+    """Download / locate PyTorch weights from a BioImage.io model.
+
+    Args:
+        source: A bioimage.io resource identifier (e.g. ``"affable-shark"``)
+                or a local path to ``rdf.yaml`` / ``.zip``.
+
+    Returns:
+        Path to the PyTorch state-dict weights file on disk.
+    """
+    try:
+        from bioimageio.spec import load_description
+    except ImportError:
+        raise ImportError(
+            "The 'bioimageio.spec' package is required to load BioImage.io "
+            "models.  Install it with:  pip install 'bioimageio.core'"
+        )
+
+    logger.info(f"Loading BioImage.io model description: {source}")
+    model_descr = load_description(source)
+
+    # Locate pytorch_state_dict weights
+    weights = getattr(model_descr, "weights", None)
+    if weights is None:
+        raise ValueError(f"BioImage.io model '{source}' has no weights field.")
+
+    pt_weights = getattr(weights, "pytorch_state_dict", None)
+    if pt_weights is None:
+        available = getattr(weights, "available_formats", [])
+        raise ValueError(
+            f"BioImage.io model '{source}' has no pytorch_state_dict weights. "
+            f"Available weight formats: {available}"
+        )
+
+    weights_path = str(pt_weights.source)
+    logger.info(f"BioImage.io PyTorch weights resolved to: {weights_path}")
+    return weights_path
+
+
 def setup_seed(seed: int) -> None:
     """Set random seeds for reproducibility."""
     import random
@@ -126,10 +214,12 @@ def train_cellpose_model(config: dict) -> str:
 
     # ---- Initialize Cellpose model ----
     model_cfg = config.get("MODEL", {})
-    pretrained = model_cfg.get("PRETRAINED_MODEL", None)
+    pretrained_spec = model_cfg.get("PRETRAINED_MODEL", None)
+    pretrained = resolve_pretrained_model(pretrained_spec)
 
     logger.info(f"Initializing CellposeModel (gpu={use_gpu})")
     if pretrained:
+        logger.info(f"Pretrained model: {pretrained}")
         model = models.CellposeModel(gpu=use_gpu, pretrained_model=pretrained)
     else:
         # Default: start from the built-in cpsam model

@@ -21,14 +21,95 @@ logger = logging.getLogger(__name__)
 
 
 def load_image(path: str) -> np.ndarray:
-    """Load an image from disk (supports TIFF, PNG, JPG, ND2)."""
+    """Load an image from disk (supports TIFF, PNG, JPG, ND2).
+
+    For .nd2 files with multiple positions, returns only the first position.
+    Use ``expand_nd2_positions`` to split multi-position files first.
+    """
     ext = Path(path).suffix.lower()
     if ext in (".tif", ".tiff"):
         return tifffile.imread(path)
     if ext == ".nd2":
         import nd2
-        return nd2.imread(path)
+        with nd2.ND2File(path) as f:
+            sizes = f.sizes
+            arr = f.asarray()
+            # If the file has a position axis, take the first position
+            if "P" in sizes:
+                arr = arr[0]
+        return arr
     return skio.imread(path)
+
+
+def expand_nd2_positions(
+    nd2_path: str,
+    output_dir: str,
+    position_indices: list[int] | None = None,
+) -> list[str]:
+    """Split a multi-position .nd2 file into individual TIFF files.
+
+    Each position is saved as ``<stem>_pos<NNN>.tif`` inside *output_dir*.
+    Only the specified *position_indices* are extracted; ``None`` means all.
+
+    Returns:
+        List of paths to the saved TIFF files.
+    """
+    import nd2
+
+    os.makedirs(output_dir, exist_ok=True)
+    stem = Path(nd2_path).stem
+    saved: list[str] = []
+
+    with nd2.ND2File(nd2_path) as f:
+        sizes = f.sizes
+        arr = f.asarray()
+
+        if "P" not in sizes:
+            # Single-position file — save as-is
+            out_path = os.path.join(output_dir, f"{stem}.tif")
+            tifffile.imwrite(out_path, arr)
+            saved.append(out_path)
+            logger.info(f"Single-position ND2 saved to {out_path}")
+            return saved
+
+        n_positions = sizes["P"]
+        # Determine which axis is the position axis
+        axis_order = list(sizes.keys())
+        p_axis = axis_order.index("P")
+
+        indices = position_indices if position_indices is not None else list(range(n_positions))
+        for idx in indices:
+            if idx < 0 or idx >= n_positions:
+                logger.warning(f"Position index {idx} out of range (0-{n_positions-1}), skipping")
+                continue
+            pos_data = np.take(arr, idx, axis=p_axis)
+            out_path = os.path.join(output_dir, f"{stem}_pos{idx:03d}.tif")
+            tifffile.imwrite(out_path, pos_data)
+            saved.append(out_path)
+
+        logger.info(
+            f"Expanded {n_positions}-position ND2 -> {len(saved)} TIFFs in {output_dir}"
+        )
+
+    return saved
+
+
+def get_nd2_info(nd2_path: str) -> dict:
+    """Return metadata for an .nd2 file without loading the full array.
+
+    Returns:
+        Dict with keys: path, sizes, n_positions, shape, dtype.
+    """
+    import nd2
+
+    with nd2.ND2File(nd2_path) as f:
+        return {
+            "path": nd2_path,
+            "sizes": dict(f.sizes),
+            "n_positions": f.sizes.get("P", 1),
+            "shape": f.shape,
+            "dtype": str(f.dtype),
+        }
 
 
 def save_image(path: str, image: np.ndarray) -> None:

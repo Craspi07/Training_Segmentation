@@ -52,9 +52,14 @@ def run_inference(
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    # Load model
-    logger.info(f"Loading model from {model_path}")
-    model = models.CellposeModel(gpu=use_gpu, pretrained_model=model_path)
+    # Load model (supports BioImage.io identifiers and local paths)
+    from train_cellpose import resolve_pretrained_model
+    resolved = resolve_pretrained_model(model_path)
+    logger.info(f"Loading model from {resolved or 'default cpsam'}")
+    if resolved:
+        model = models.CellposeModel(gpu=use_gpu, pretrained_model=resolved)
+    else:
+        model = models.CellposeModel(gpu=use_gpu)
 
     # Find images
     extensions = ("*.tif", "*.tiff", "*.png", "*.jpg", "*.jpeg", "*.nd2")

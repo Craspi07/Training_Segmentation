@@ -39,18 +39,34 @@ CHANNEL_NAMES = {
 }
 
 
-def load_multichannel_image(path: str) -> np.ndarray:
+def load_multichannel_image(path: str, position: int = 0) -> np.ndarray:
     """
     Load a multi-channel image.
 
     Returns array with shape (C, H, W) for multi-channel or (H, W) for
     single-channel. Handles 8-bit, 16-bit, and float inputs.
     Supports TIFF, PNG, JPG, and ND2 (Nikon NIS-Elements) formats.
+
+    For multi-position .nd2 files, *position* selects which FOV to load
+    (default 0).  Use ``data_preparation.expand_nd2_positions`` to split
+    a multi-position file into individual TIFFs beforehand.
     """
     ext = Path(path).suffix.lower()
     if ext == ".nd2":
         import nd2
-        img = nd2.imread(path)
+        with nd2.ND2File(path) as f:
+            sizes = f.sizes
+            img = f.asarray()
+            if "P" in sizes:
+                axis_order = list(sizes.keys())
+                p_axis = axis_order.index("P")
+                n_positions = sizes["P"]
+                if position >= n_positions:
+                    raise ValueError(
+                        f"Position {position} out of range; file has "
+                        f"{n_positions} positions (0-{n_positions-1})"
+                    )
+                img = np.take(img, position, axis=p_axis)
     elif ext in (".tif", ".tiff"):
         img = tifffile.imread(path)
     else:
@@ -311,12 +327,34 @@ def generate_masks(
         logger.warning(f"No images found in {image_dir}")
         return []
 
+    # Auto-expand multi-position .nd2 files into individual TIFFs
+    expanded_files = []
+    for f in image_files:
+        if Path(f).suffix.lower() == ".nd2":
+            from data_preparation import expand_nd2_positions, get_nd2_info
+            info = get_nd2_info(f)
+            if info["n_positions"] > 1:
+                logger.info(
+                    f"Expanding multi-position ND2: {Path(f).name} "
+                    f"({info['n_positions']} positions)"
+                )
+                tiff_dir = os.path.join(image_dir, "_nd2_expanded")
+                tiff_paths = expand_nd2_positions(f, tiff_dir)
+                expanded_files.extend(tiff_paths)
+            else:
+                expanded_files.append(f)
+        else:
+            expanded_files.append(f)
+    image_files = sorted(expanded_files)
+
     logger.info(f"Found {len(image_files)} images in {image_dir}")
 
-    # Initialize model
-    if model_path:
-        logger.info(f"Loading custom model: {model_path}")
-        model = models.CellposeModel(gpu=use_gpu, pretrained_model=model_path)
+    # Initialize model (supports BioImage.io identifiers and local paths)
+    from train_cellpose import resolve_pretrained_model
+    resolved_model = resolve_pretrained_model(model_path)
+    if resolved_model:
+        logger.info(f"Loading model: {resolved_model}")
+        model = models.CellposeModel(gpu=use_gpu, pretrained_model=resolved_model)
     else:
         logger.info("Using default cpsam model")
         model = models.CellposeModel(gpu=use_gpu)

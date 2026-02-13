@@ -232,8 +232,8 @@ class SegmentationGUI(tk.Tk):
         pp_model_combo = ttk.Combobox(
             cp_frame,
             textvariable=self.pp_model_var,
-            values=["cpsam (default)", "Custom model..."],
-            width=20,
+            values=["cpsam (default)", "Custom model...", "BioImage.io model..."],
+            width=22,
             state="readonly",
         )
         pp_model_combo.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
@@ -283,6 +283,10 @@ class SegmentationGUI(tk.Tk):
             btn_frame, text="Preview Channels", command=self._pp_preview_channels
         ).pack(side=tk.LEFT, padx=5)
 
+        ttk.Button(
+            btn_frame, text="Expand ND2 Positions", command=self._pp_expand_nd2
+        ).pack(side=tk.LEFT, padx=5)
+
         self.btn_pp_run = ttk.Button(
             btn_frame, text="Generate Masks", command=self._pp_generate
         )
@@ -328,19 +332,35 @@ class SegmentationGUI(tk.Tk):
             self.pp_out_dir.set(d)
 
     def _pp_on_model_changed(self, event=None):
-        if self.pp_model_var.get() == "Custom model...":
+        choice = self.pp_model_var.get()
+        if choice == "Custom model...":
             self.pp_model_entry.config(state=tk.NORMAL)
             self.pp_model_btn.config(state=tk.NORMAL)
+            self.pp_custom_model.set("")
+        elif choice == "BioImage.io model...":
+            self.pp_model_entry.config(state=tk.NORMAL)
+            self.pp_model_btn.config(state=tk.NORMAL)
+            self.pp_custom_model.set("bioimage.io:")
         else:
             self.pp_model_entry.config(state=tk.DISABLED)
             self.pp_model_btn.config(state=tk.DISABLED)
             self.pp_custom_model.set("")
 
     def _pp_browse_model(self):
-        path = filedialog.askopenfilename(
-            title="Select Cellpose Model",
-            initialdir=str(PROJECT_ROOT / "models"),
-        )
+        if self.pp_model_var.get() == "BioImage.io model...":
+            path = filedialog.askopenfilename(
+                title="Select BioImage.io Model (rdf.yaml / .zip)",
+                initialdir=str(PROJECT_ROOT / "models"),
+                filetypes=[
+                    ("BioImage.io", "*.yaml *.yml *.zip"),
+                    ("All", "*.*"),
+                ],
+            )
+        else:
+            path = filedialog.askopenfilename(
+                title="Select Cellpose Model",
+                initialdir=str(PROJECT_ROOT / "models"),
+            )
         if path:
             self.pp_custom_model.set(path)
 
@@ -395,6 +415,57 @@ class SegmentationGUI(tk.Tk):
             messagebox.showerror("Error", f"Failed to generate preview:\n{e}")
             logger.exception("Channel preview failed")
 
+    def _pp_expand_nd2(self):
+        """Expand multi-position .nd2 files in the image directory into TIFFs."""
+        img_dir = self.pp_img_dir.get()
+        if not img_dir:
+            messagebox.showwarning("Missing", "Select an image directory first.")
+            return
+
+        import glob as _glob
+        nd2_files = sorted(_glob.glob(os.path.join(img_dir, "*.nd2")))
+        if not nd2_files:
+            messagebox.showinfo("No ND2", "No .nd2 files found in the directory.")
+            return
+
+        from data_preparation import expand_nd2_positions, get_nd2_info
+
+        output_dir = os.path.join(img_dir, "_nd2_expanded")
+        total_saved = []
+        multi_pos_count = 0
+
+        for nd2_file in nd2_files:
+            try:
+                info = get_nd2_info(nd2_file)
+                n_pos = info["n_positions"]
+                if n_pos > 1:
+                    multi_pos_count += 1
+                    logger.info(
+                        f"Expanding {Path(nd2_file).name}: "
+                        f"{n_pos} positions, shape={info['shape']}"
+                    )
+                saved = expand_nd2_positions(nd2_file, output_dir)
+                total_saved.extend(saved)
+            except Exception as e:
+                logger.error(f"Failed to expand {Path(nd2_file).name}: {e}")
+                messagebox.showerror(
+                    "ND2 Error",
+                    f"Failed to expand {Path(nd2_file).name}:\n{e}",
+                )
+
+        if total_saved:
+            messagebox.showinfo(
+                "ND2 Expanded",
+                f"Processed {len(nd2_files)} ND2 file(s) "
+                f"({multi_pos_count} multi-position).\n"
+                f"Saved {len(total_saved)} individual TIFFs to:\n{output_dir}\n\n"
+                "You can now use this directory as the image input, or the "
+                "pipeline will auto-expand during mask generation.",
+            )
+            self.pp_status.set(
+                f"Expanded {len(nd2_files)} ND2 -> {len(total_saved)} TIFFs"
+            )
+
     def _pp_generate(self):
         """Generate draft masks in a background thread."""
         img_dir = self.pp_img_dir.get()
@@ -412,9 +483,9 @@ class SegmentationGUI(tk.Tk):
         diam_str = self.pp_diameter.get().strip().lower()
         diameter = None if diam_str in ("auto", "none", "") else float(diam_str)
 
-        # Parse model
+        # Parse model (supports local paths and BioImage.io identifiers)
         model_path = None
-        if self.pp_model_var.get() == "Custom model...":
+        if self.pp_model_var.get() in ("Custom model...", "BioImage.io model..."):
             model_path = self.pp_custom_model.get() or None
 
         def progress_cb(current, total, filename):
@@ -765,7 +836,7 @@ class SegmentationGUI(tk.Tk):
         model_combo = ttk.Combobox(
             model_frame,
             textvariable=self.model_source_var,
-            values=["cpsam (default)", "Custom model..."],
+            values=["cpsam (default)", "Custom model...", "BioImage.io model..."],
             width=25,
             state="readonly",
         )
@@ -851,7 +922,16 @@ class SegmentationGUI(tk.Tk):
         if choice == "Custom model...":
             self.custom_model_entry.config(state=tk.NORMAL)
             self.custom_model_btn.config(state=tk.NORMAL)
+            self.custom_model_path_var.set("")
             self.model_info_var.set("Select a custom model file below")
+        elif choice == "BioImage.io model...":
+            self.custom_model_entry.config(state=tk.NORMAL)
+            self.custom_model_btn.config(state=tk.NORMAL)
+            self.custom_model_path_var.set("bioimage.io:")
+            self.model_info_var.set(
+                "Enter a BioImage.io resource ID (e.g. bioimage.io:affable-shark) "
+                "or browse for a rdf.yaml / .zip file"
+            )
         else:
             self.custom_model_entry.config(state=tk.DISABLED)
             self.custom_model_btn.config(state=tk.DISABLED)
@@ -862,11 +942,21 @@ class SegmentationGUI(tk.Tk):
                 self.yaml_config["MODEL"]["PRETRAINED_MODEL"] = None
 
     def _browse_custom_model(self):
-        """Browse for a custom Cellpose model file."""
-        path = filedialog.askopenfilename(
-            title="Select Cellpose Model",
-            initialdir=str(PROJECT_ROOT / "models"),
-        )
+        """Browse for a custom Cellpose or BioImage.io model file."""
+        if self.model_source_var.get() == "BioImage.io model...":
+            path = filedialog.askopenfilename(
+                title="Select BioImage.io Model (rdf.yaml / .zip)",
+                initialdir=str(PROJECT_ROOT / "models"),
+                filetypes=[
+                    ("BioImage.io", "*.yaml *.yml *.zip"),
+                    ("All", "*.*"),
+                ],
+            )
+        else:
+            path = filedialog.askopenfilename(
+                title="Select Cellpose Model",
+                initialdir=str(PROJECT_ROOT / "models"),
+            )
         if path:
             self.custom_model_path_var.set(path)
             model_name = Path(path).name
@@ -885,11 +975,20 @@ class SegmentationGUI(tk.Tk):
         model_cfg = self.yaml_config.get("MODEL", {})
         pretrained = model_cfg.get("PRETRAINED_MODEL")
         if pretrained:
-            self.model_source_var.set("Custom model...")
-            self.custom_model_path_var.set(str(pretrained))
+            pretrained_str = str(pretrained)
+            is_bioimage = (
+                pretrained_str.startswith("bioimage.io:")
+                or pretrained_str.endswith((".yaml", ".yml", ".zip"))
+            )
+            if is_bioimage:
+                self.model_source_var.set("BioImage.io model...")
+                self.model_info_var.set(f"BioImage.io model: {pretrained_str}")
+            else:
+                self.model_source_var.set("Custom model...")
+                self.model_info_var.set(f"Custom model: {Path(pretrained_str).name}")
+            self.custom_model_path_var.set(pretrained_str)
             self.custom_model_entry.config(state=tk.NORMAL)
             self.custom_model_btn.config(state=tk.NORMAL)
-            self.model_info_var.set(f"Custom model: {Path(str(pretrained)).name}")
         else:
             self.model_source_var.set("cpsam (default)")
             self.custom_model_path_var.set("")
@@ -988,7 +1087,7 @@ class SegmentationGUI(tk.Tk):
         if self.yaml_config:
             if "MODEL" not in self.yaml_config:
                 self.yaml_config["MODEL"] = {}
-            if self.model_source_var.get() == "Custom model...":
+            if self.model_source_var.get() in ("Custom model...", "BioImage.io model..."):
                 custom_path = self.custom_model_path_var.get()
                 self.yaml_config["MODEL"]["PRETRAINED_MODEL"] = custom_path if custom_path else None
             else:

@@ -60,7 +60,13 @@ AUGMENTATION:
 
 MODEL:
   BACKEND: "cellpose"
-  PRETRAINED_MODEL: null  # Start from default cpsam model
+  # PRETRAINED_MODEL accepts:
+  #   null              — use default cpsam model
+  #   "/path/to/model"  — local Cellpose model file
+  #   "bioimage.io:affable-shark"  — BioImage.io model by resource ID
+  #   "/path/to/rdf.yaml"          — BioImage.io model description file
+  #   "/path/to/model.zip"         — BioImage.io model package
+  PRETRAINED_MODEL: null
   ARCHITECTURE: "cpsam"
 
 TRAIN:
