@@ -57,16 +57,22 @@ def load_multichannel_image(path: str, position: int = 0) -> np.ndarray:
         with nd2.ND2File(path) as f:
             sizes = f.sizes
             img = f.asarray()
-            if "P" in sizes:
-                axis_order = list(sizes.keys())
-                p_axis = axis_order.index("P")
-                n_positions = sizes["P"]
-                if position >= n_positions:
-                    raise ValueError(
-                        f"Position {position} out of range; file has "
-                        f"{n_positions} positions (0-{n_positions-1})"
-                    )
-                img = np.take(img, position, axis=p_axis)
+            # Collapse extra dimensions (P, T, Z) to get (C, Y, X)
+            # by taking the first index along each extra axis.
+            axis_order = list(sizes.keys())
+            for dim in ("P", "T", "Z"):
+                if dim in sizes:
+                    ax = axis_order.index(dim)
+                    idx = position if dim == "P" else 0
+                    n = sizes[dim]
+                    if dim == "P" and idx >= n:
+                        raise ValueError(
+                            f"Position {idx} out of range; file has "
+                            f"{n} positions (0-{n-1})"
+                        )
+                    img = np.take(img, min(idx, n - 1), axis=ax)
+                    # After removing an axis the remaining axis indices shift
+                    axis_order.pop(ax)
     elif ext in (".tif", ".tiff"):
         img = tifffile.imread(path)
     else:
@@ -80,6 +86,22 @@ def load_multichannel_image(path: str, position: int = 0) -> np.ndarray:
         # Heuristic: if last dim is small (<=4), it's likely channels-last
         if img.shape[-1] <= 4 and img.shape[0] > 4:
             img = np.moveaxis(img, -1, 0)  # (H, W, C) -> (C, H, W)
+        return img
+    elif img.ndim > 3:
+        # Still extra dimensions — squeeze leading singleton dims or
+        # take first index until we reach 3D (C, H, W).
+        while img.ndim > 3:
+            if img.shape[0] == 1:
+                img = img[0]
+            else:
+                logger.warning(
+                    f"Collapsing unexpected leading axis of size {img.shape[0]} "
+                    f"(taking first frame). Shape was {img.shape}"
+                )
+                img = img[0]
+        # Re-check channels-last
+        if img.ndim == 3 and img.shape[-1] <= 4 and img.shape[0] > 4:
+            img = np.moveaxis(img, -1, 0)
         return img
     else:
         return img

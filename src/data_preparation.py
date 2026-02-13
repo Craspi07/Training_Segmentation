@@ -33,9 +33,13 @@ def load_image(path: str) -> np.ndarray:
         with nd2.ND2File(path) as f:
             sizes = f.sizes
             arr = f.asarray()
-            # If the file has a position axis, take the first position
-            if "P" in sizes:
-                arr = arr[0]
+            # Collapse extra dimensions (P, T, Z) — take first index
+            axis_order = list(sizes.keys())
+            for dim in ("P", "T", "Z"):
+                if dim in sizes:
+                    ax = axis_order.index(dim)
+                    arr = arr.take(0, axis=ax)
+                    axis_order.pop(ax)
         return arr
     return skio.imread(path)
 
@@ -63,7 +67,15 @@ def expand_nd2_positions(
         sizes = f.sizes
         arr = f.asarray()
 
-        if "P" not in sizes:
+        # Collapse T and Z axes first (take first frame/slice)
+        axis_order = list(sizes.keys())
+        for dim in ("T", "Z"):
+            if dim in sizes:
+                ax = axis_order.index(dim)
+                arr = arr.take(0, axis=ax)
+                axis_order.pop(ax)
+
+        if "P" not in axis_order:
             # Single-position file — save as-is
             out_path = os.path.join(output_dir, f"{stem}.tif")
             tifffile.imwrite(out_path, arr)
@@ -72,8 +84,6 @@ def expand_nd2_positions(
             return saved
 
         n_positions = sizes["P"]
-        # Determine which axis is the position axis
-        axis_order = list(sizes.keys())
         p_axis = axis_order.index("P")
 
         indices = position_indices if position_indices is not None else list(range(n_positions))
