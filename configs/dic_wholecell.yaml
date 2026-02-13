@@ -36,6 +36,9 @@ DATA:
   #   First value  = channel to segment (0=DIC for whole-cell)
   #   Second value = optional nuclear helper channel (0=none)
   CHANNELS: [0, 0]
+  # Z_SLICE: Which Z-slice to extract from Z-stack .nd2 files (0-indexed).
+  #   null = first slice (index 0).  E.g. set to 8 to extract Z-index 8.
+  Z_SLICE: null
   NORMALIZE: true
 
 AUGMENTATION:

@@ -214,13 +214,29 @@ class SegmentationGUI(tk.Tk):
             foreground="gray",
         ).grid(row=3, column=2, sticky=tk.W, padx=5)
 
+        # Z-slice for ND2 Z-stacks
+        ttk.Label(settings_frame, text="Z-Slice (ND2):").grid(
+            row=4, column=0, sticky=tk.W, pady=2
+        )
+        z_frame = ttk.Frame(settings_frame)
+        z_frame.grid(row=4, column=1, columnspan=2, sticky=tk.W, padx=5)
+        self.pp_z_slice = tk.StringVar(value="0")
+        ttk.Entry(z_frame, textvariable=self.pp_z_slice, width=6).pack(
+            side=tk.LEFT, padx=(0, 10)
+        )
+        ttk.Label(
+            z_frame,
+            text="(0-indexed Z-slice for Z-stack .nd2 files)",
+            foreground="gray",
+        ).pack(side=tk.LEFT)
+
         # Invert DIC
         self.pp_invert_dic = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             settings_frame,
             text="Invert DIC (cells dark on bright background)",
             variable=self.pp_invert_dic,
-        ).grid(row=4, column=0, columnspan=3, sticky=tk.W, pady=2)
+        ).grid(row=5, column=0, columnspan=3, sticky=tk.W, pady=2)
 
         # ---- Cellpose Settings ----
         cp_frame = ttk.LabelFrame(tab, text="Cellpose Settings", padding=10)
@@ -396,6 +412,9 @@ class SegmentationGUI(tk.Tk):
             return
 
         preview_dir = str(PROJECT_ROOT / "results" / "channel_previews")
+        z_val = self.pp_z_slice.get().strip()
+        z_slice = int(z_val) if z_val else None
+
         try:
             path = save_channel_preview(
                 files[0],
@@ -403,6 +422,7 @@ class SegmentationGUI(tk.Tk):
                 lower_percentile=self.pp_lower_pct.get(),
                 upper_percentile=self.pp_upper_pct.get(),
                 tile_blocksize_dic=self.pp_tile_bs.get(),
+                z_slice=z_slice,
             )
             self.pp_status.set(f"Channel preview saved: {path}")
             logger.info(f"Channel preview saved to {path}")
@@ -483,6 +503,10 @@ class SegmentationGUI(tk.Tk):
         diam_str = self.pp_diameter.get().strip().lower()
         diameter = None if diam_str in ("auto", "none", "") else float(diam_str)
 
+        # Parse Z-slice
+        z_val = self.pp_z_slice.get().strip()
+        z_slice = int(z_val) if z_val else None
+
         # Parse model (supports local paths and BioImage.io identifiers)
         model_path = None
         if self.pp_model_var.get() in ("Custom model...", "BioImage.io model..."):
@@ -511,6 +535,7 @@ class SegmentationGUI(tk.Tk):
                     tile_blocksize_dic=self.pp_tile_bs.get(),
                     invert_dic=self.pp_invert_dic.get(),
                     use_gpu=True,
+                    z_slice=z_slice,
                     progress_callback=progress_cb,
                 )
                 # Encode results for the GUI thread
@@ -1015,6 +1040,7 @@ class SegmentationGUI(tk.Tk):
 
         row = self._add_section("DATA", row, [
             ("CHANNELS", "Channels [segment, nuclear]  (0=DIC, 1=mEGFP, 2=mScarlet, 3=miRFPnano3)", "str"),
+            ("Z_SLICE", "Z-Slice (null=first, or 0-indexed integer)", "str"),
         ])
 
         row = self._add_section("INFERENCE", row, [

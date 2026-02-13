@@ -37,6 +37,9 @@ DATA:
   #   For nucleus segmentation from miRFPnano3: [3, 0]
   #   Use [0, 0] if images are single-channel (already extracted)
   CHANNELS: [1, 0]
+  # Z_SLICE: Which Z-slice to extract from Z-stack .nd2 files (0-indexed).
+  #   null = first slice (index 0).  E.g. set to 8 to extract Z-index 8.
+  Z_SLICE: null
   NORMALIZE: true
 
 AUGMENTATION:

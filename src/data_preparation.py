@@ -19,11 +19,16 @@ from scipy.ndimage import gaussian_filter, map_coordinates
 logger = logging.getLogger(__name__)
 
 
-def load_image(path: str) -> np.ndarray:
+def load_image(path: str, z_slice: int | None = None) -> np.ndarray:
     """Load an image from disk (supports TIFF, PNG, JPG, ND2).
 
     For .nd2 files with multiple positions, returns only the first position.
     Use ``expand_nd2_positions`` to split multi-position files first.
+
+    Args:
+        path: Path to image file.
+        z_slice: For Z-stack .nd2 files, which Z-slice to extract
+                 (0-indexed). ``None`` means take the first slice (index 0).
     """
     ext = Path(path).suffix.lower()
     if ext in (".tif", ".tiff"):
@@ -33,12 +38,21 @@ def load_image(path: str) -> np.ndarray:
         with nd2.ND2File(path) as f:
             sizes = f.sizes
             arr = f.asarray()
-            # Collapse extra dimensions (P, T, Z) — take first index
+            # Collapse extra dimensions (P, Z) — take requested index
             axis_order = list(sizes.keys())
-            for dim in ("P", "T", "Z"):
+            for dim in ("P", "Z"):
                 if dim in sizes:
                     ax = axis_order.index(dim)
-                    arr = arr.take(0, axis=ax)
+                    if dim == "Z" and z_slice is not None:
+                        n = sizes[dim]
+                        if z_slice < 0 or z_slice >= n:
+                            raise ValueError(
+                                f"Z-slice {z_slice} out of range; "
+                                f"file has {n} Z-slices (0-{n-1})"
+                            )
+                        arr = arr.take(z_slice, axis=ax)
+                    else:
+                        arr = arr.take(0, axis=ax)
                     axis_order.pop(ax)
         return arr
     return skio.imread(path)
@@ -48,11 +62,19 @@ def expand_nd2_positions(
     nd2_path: str,
     output_dir: str,
     position_indices: list[int] | None = None,
+    z_slice: int | None = None,
 ) -> list[str]:
     """Split a multi-position .nd2 file into individual TIFF files.
 
     Each position is saved as ``<stem>_pos<NNN>.tif`` inside *output_dir*.
     Only the specified *position_indices* are extracted; ``None`` means all.
+
+    Args:
+        nd2_path: Path to the .nd2 file.
+        output_dir: Directory to save individual TIFFs.
+        position_indices: Which positions to extract (``None`` = all).
+        z_slice: Which Z-slice to extract (0-indexed). ``None`` means
+                 take the first slice (index 0).
 
     Returns:
         List of paths to the saved TIFF files.
@@ -67,13 +89,19 @@ def expand_nd2_positions(
         sizes = f.sizes
         arr = f.asarray()
 
-        # Collapse T and Z axes first (take first frame/slice)
+        # Collapse Z axis (take user-defined slice or first)
         axis_order = list(sizes.keys())
-        for dim in ("T", "Z"):
-            if dim in sizes:
-                ax = axis_order.index(dim)
-                arr = arr.take(0, axis=ax)
-                axis_order.pop(ax)
+        if "Z" in sizes:
+            ax = axis_order.index("Z")
+            z_idx = z_slice if z_slice is not None else 0
+            n_z = sizes["Z"]
+            if z_idx < 0 or z_idx >= n_z:
+                raise ValueError(
+                    f"Z-slice {z_idx} out of range; "
+                    f"file has {n_z} Z-slices (0-{n_z-1})"
+                )
+            arr = arr.take(z_idx, axis=ax)
+            axis_order.pop(ax)
 
         if "P" not in axis_order:
             # Single-position file — save as-is

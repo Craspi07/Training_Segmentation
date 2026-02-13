@@ -39,7 +39,9 @@ CHANNEL_NAMES = {
 }
 
 
-def load_multichannel_image(path: str, position: int = 0) -> np.ndarray:
+def load_multichannel_image(
+    path: str, position: int = 0, z_slice: int | None = None
+) -> np.ndarray:
     """
     Load a multi-channel image.
 
@@ -50,6 +52,12 @@ def load_multichannel_image(path: str, position: int = 0) -> np.ndarray:
     For multi-position .nd2 files, *position* selects which FOV to load
     (default 0).  Use ``data_preparation.expand_nd2_positions`` to split
     a multi-position file into individual TIFFs beforehand.
+
+    Args:
+        path: Path to image file.
+        position: For multi-position .nd2 files, which position to load.
+        z_slice: For Z-stack .nd2 files, which Z-slice to extract
+                 (0-indexed). ``None`` means take the first slice (index 0).
     """
     ext = Path(path).suffix.lower()
     if ext == ".nd2":
@@ -57,21 +65,28 @@ def load_multichannel_image(path: str, position: int = 0) -> np.ndarray:
         with nd2.ND2File(path) as f:
             sizes = f.sizes
             img = f.asarray()
-            # Collapse extra dimensions (P, T, Z) to get (C, Y, X)
-            # by taking the first index along each extra axis.
+            # Collapse extra dimensions (P, Z) to get (C, Y, X)
+            # by taking the requested index along each extra axis.
             axis_order = list(sizes.keys())
-            for dim in ("P", "T", "Z"):
+            for dim in ("P", "Z"):
                 if dim in sizes:
                     ax = axis_order.index(dim)
-                    idx = position if dim == "P" else 0
                     n = sizes[dim]
-                    if dim == "P" and idx >= n:
-                        raise ValueError(
-                            f"Position {idx} out of range; file has "
-                            f"{n} positions (0-{n-1})"
-                        )
-                    img = np.take(img, min(idx, n - 1), axis=ax)
-                    # After removing an axis the remaining axis indices shift
+                    if dim == "P":
+                        idx = position
+                        if idx >= n:
+                            raise ValueError(
+                                f"Position {idx} out of range; file has "
+                                f"{n} positions (0-{n-1})"
+                            )
+                    elif dim == "Z":
+                        idx = z_slice if z_slice is not None else 0
+                        if idx < 0 or idx >= n:
+                            raise ValueError(
+                                f"Z-slice {idx} out of range; file has "
+                                f"{n} Z-slices (0-{n-1})"
+                            )
+                    img = np.take(img, idx, axis=ax)
                     axis_order.pop(ax)
     elif ext in (".tif", ".tiff"):
         img = tifffile.imread(path)
@@ -107,13 +122,13 @@ def load_multichannel_image(path: str, position: int = 0) -> np.ndarray:
         return img
 
 
-def get_image_info(path: str) -> dict:
+def get_image_info(path: str, z_slice: int | None = None) -> dict:
     """
     Get metadata about a multi-channel image without fully loading it.
 
     Returns dict with shape, dtype, num_channels, and channel availability.
     """
-    img = load_multichannel_image(path)
+    img = load_multichannel_image(path, z_slice=z_slice)
     n_channels = img.shape[0] if img.ndim == 3 else 1
 
     info = {
@@ -304,6 +319,7 @@ def generate_masks(
     tile_blocksize_dic: int = 128,
     invert_dic: bool = False,
     use_gpu: bool = True,
+    z_slice: int | None = None,
     progress_callback=None,
 ) -> list[tuple[str, int]]:
     """
@@ -329,6 +345,8 @@ def generate_masks(
         tile_blocksize_dic: Tile normalization block size for DIC.
         invert_dic: Whether to invert DIC brightness.
         use_gpu: Use GPU for inference.
+        z_slice: For Z-stack .nd2 files, which Z-slice to extract
+                 (0-indexed). ``None`` = first slice.
         progress_callback: Optional callable(current, total, filename) for GUI.
 
     Returns:
@@ -361,7 +379,7 @@ def generate_masks(
                     f"({info['n_positions']} positions)"
                 )
                 tiff_dir = os.path.join(image_dir, "_nd2_expanded")
-                tiff_paths = expand_nd2_positions(f, tiff_dir)
+                tiff_paths = expand_nd2_positions(f, tiff_dir, z_slice=z_slice)
                 expanded_files.extend(tiff_paths)
             else:
                 expanded_files.append(f)
@@ -399,7 +417,7 @@ def generate_masks(
 
         try:
             # Load and preprocess
-            raw = load_multichannel_image(img_path)
+            raw = load_multichannel_image(img_path, z_slice=z_slice)
             img_info = get_image_info(img_path)
 
             # Check if requested channel has signal
@@ -464,6 +482,7 @@ def save_channel_preview(
     lower_percentile: float = 1.0,
     upper_percentile: float = 99.0,
     tile_blocksize_dic: int = 128,
+    z_slice: int | None = None,
 ) -> str:
     """
     Save a side-by-side preview of all channels in an image.
@@ -475,7 +494,7 @@ def save_channel_preview(
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    raw = load_multichannel_image(image_path)
+    raw = load_multichannel_image(image_path, z_slice=z_slice)
     info = get_image_info(image_path)
     n_channels = info["num_channels"]
 
@@ -536,6 +555,7 @@ if __name__ == "__main__":
     parser.add_argument("--tile-blocksize", type=int, default=128, help="Tile norm blocksize for DIC")
     parser.add_argument("--invert-dic", action="store_true", help="Invert DIC channel")
     parser.add_argument("--no-gpu", action="store_true", help="Disable GPU")
+    parser.add_argument("--z-slice", type=int, default=None, help="Z-slice index for Z-stack ND2 files (0-indexed, default: 0)")
 
     args = parser.parse_args()
 
@@ -551,4 +571,5 @@ if __name__ == "__main__":
         tile_blocksize_dic=args.tile_blocksize,
         invert_dic=args.invert_dic,
         use_gpu=not args.no_gpu,
+        z_slice=args.z_slice,
     )
