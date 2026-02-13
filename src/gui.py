@@ -89,20 +89,406 @@ class SegmentationGUI(tk.Tk):
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
 
+        self.tab_preprocess = ttk.Frame(self.notebook)
         self.tab_rename = ttk.Frame(self.notebook)
         self.tab_config = ttk.Frame(self.notebook)
         self.tab_train = ttk.Frame(self.notebook)
         self.tab_eval = ttk.Frame(self.notebook)
 
+        self.notebook.add(self.tab_preprocess, text="  Preprocessing  ")
         self.notebook.add(self.tab_rename, text="  File Renaming  ")
         self.notebook.add(self.tab_config, text="  Configuration  ")
         self.notebook.add(self.tab_train, text="  Training  ")
         self.notebook.add(self.tab_eval, text="  Evaluation  ")
 
+        self._build_preprocess_tab()
         self._build_rename_tab()
         self._build_config_tab()
         self._build_train_tab()
         self._build_eval_tab()
+
+    # ==================================================================
+    # TAB 0: PREPROCESSING
+    # ==================================================================
+    def _build_preprocess_tab(self):
+        tab = self.tab_preprocess
+
+        # ---- Input / Output ----
+        io_frame = ttk.LabelFrame(tab, text="Directories", padding=10)
+        io_frame.pack(fill=tk.X, padx=10, pady=(10, 5))
+
+        ttk.Label(io_frame, text="Image Directory:").grid(
+            row=0, column=0, sticky=tk.W, pady=2
+        )
+        self.pp_img_dir = tk.StringVar()
+        ttk.Entry(io_frame, textvariable=self.pp_img_dir, width=55).grid(
+            row=0, column=1, padx=5, pady=2
+        )
+        ttk.Button(io_frame, text="Browse...", command=self._pp_browse_img).grid(
+            row=0, column=2, pady=2
+        )
+
+        ttk.Label(io_frame, text="Mask Output Directory:").grid(
+            row=1, column=0, sticky=tk.W, pady=2
+        )
+        self.pp_out_dir = tk.StringVar(
+            value=str(PROJECT_ROOT / "data" / "draft_masks")
+        )
+        ttk.Entry(io_frame, textvariable=self.pp_out_dir, width=55).grid(
+            row=1, column=1, padx=5, pady=2
+        )
+        ttk.Button(io_frame, text="Browse...", command=self._pp_browse_out).grid(
+            row=1, column=2, pady=2
+        )
+
+        # ---- Channel & Normalization Settings ----
+        settings_frame = ttk.LabelFrame(tab, text="Channel & Normalization", padding=10)
+        settings_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        # Segment channel
+        ttk.Label(settings_frame, text="Segment Channel:").grid(
+            row=0, column=0, sticky=tk.W, pady=2
+        )
+        self.pp_seg_channel = tk.IntVar(value=0)
+        seg_combo = ttk.Combobox(
+            settings_frame,
+            textvariable=self.pp_seg_channel,
+            values=[0, 1, 2, 3],
+            width=5,
+            state="readonly",
+        )
+        seg_combo.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
+        self.pp_seg_label = tk.StringVar(value="DIC")
+        ttk.Label(settings_frame, textvariable=self.pp_seg_label, foreground="gray").grid(
+            row=0, column=2, sticky=tk.W, padx=5
+        )
+        seg_combo.bind("<<ComboboxSelected>>", self._pp_update_channel_labels)
+
+        # Nuclear channel
+        ttk.Label(settings_frame, text="Nuclear Channel:").grid(
+            row=1, column=0, sticky=tk.W, pady=2
+        )
+        self.pp_nuc_channel = tk.IntVar(value=0)
+        nuc_combo = ttk.Combobox(
+            settings_frame,
+            textvariable=self.pp_nuc_channel,
+            values=[0, 1, 2, 3],
+            width=5,
+            state="readonly",
+        )
+        nuc_combo.grid(row=1, column=1, padx=5, pady=2, sticky=tk.W)
+        self.pp_nuc_label = tk.StringVar(value="None (grayscale)")
+        ttk.Label(settings_frame, textvariable=self.pp_nuc_label, foreground="gray").grid(
+            row=1, column=2, sticky=tk.W, padx=5
+        )
+        nuc_combo.bind("<<ComboboxSelected>>", self._pp_update_channel_labels)
+
+        # Percentile range
+        ttk.Label(settings_frame, text="Normalization Percentile:").grid(
+            row=2, column=0, sticky=tk.W, pady=2
+        )
+        pct_frame = ttk.Frame(settings_frame)
+        pct_frame.grid(row=2, column=1, columnspan=2, sticky=tk.W, padx=5)
+        ttk.Label(pct_frame, text="Low:").pack(side=tk.LEFT)
+        self.pp_lower_pct = tk.DoubleVar(value=1.0)
+        ttk.Entry(pct_frame, textvariable=self.pp_lower_pct, width=6).pack(
+            side=tk.LEFT, padx=(2, 10)
+        )
+        ttk.Label(pct_frame, text="High:").pack(side=tk.LEFT)
+        self.pp_upper_pct = tk.DoubleVar(value=99.0)
+        ttk.Entry(pct_frame, textvariable=self.pp_upper_pct, width=6).pack(
+            side=tk.LEFT, padx=2
+        )
+
+        # Tile normalization
+        ttk.Label(settings_frame, text="DIC Tile Blocksize:").grid(
+            row=3, column=0, sticky=tk.W, pady=2
+        )
+        self.pp_tile_bs = tk.IntVar(value=128)
+        ttk.Entry(settings_frame, textvariable=self.pp_tile_bs, width=8).grid(
+            row=3, column=1, padx=5, pady=2, sticky=tk.W
+        )
+        ttk.Label(
+            settings_frame,
+            text="(0 = global normalization, >0 = tile-based for uneven illumination)",
+            foreground="gray",
+        ).grid(row=3, column=2, sticky=tk.W, padx=5)
+
+        # Invert DIC
+        self.pp_invert_dic = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            settings_frame,
+            text="Invert DIC (cells dark on bright background)",
+            variable=self.pp_invert_dic,
+        ).grid(row=4, column=0, columnspan=3, sticky=tk.W, pady=2)
+
+        # ---- Cellpose Settings ----
+        cp_frame = ttk.LabelFrame(tab, text="Cellpose Settings", padding=10)
+        cp_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        # Model
+        ttk.Label(cp_frame, text="Model:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        self.pp_model_var = tk.StringVar(value="cpsam (default)")
+        pp_model_combo = ttk.Combobox(
+            cp_frame,
+            textvariable=self.pp_model_var,
+            values=["cpsam (default)", "Custom model..."],
+            width=20,
+            state="readonly",
+        )
+        pp_model_combo.grid(row=0, column=1, padx=5, pady=2, sticky=tk.W)
+        pp_model_combo.bind("<<ComboboxSelected>>", self._pp_on_model_changed)
+
+        self.pp_custom_model = tk.StringVar()
+        self.pp_model_entry = ttk.Entry(
+            cp_frame, textvariable=self.pp_custom_model, width=35
+        )
+        self.pp_model_entry.grid(row=0, column=2, padx=5, pady=2)
+        self.pp_model_entry.config(state=tk.DISABLED)
+        self.pp_model_btn = ttk.Button(
+            cp_frame, text="Browse...", command=self._pp_browse_model
+        )
+        self.pp_model_btn.grid(row=0, column=3, pady=2)
+        self.pp_model_btn.config(state=tk.DISABLED)
+
+        # Diameter
+        ttk.Label(cp_frame, text="Diameter:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        self.pp_diameter = tk.StringVar(value="auto")
+        ttk.Entry(cp_frame, textvariable=self.pp_diameter, width=10).grid(
+            row=1, column=1, padx=5, pady=2, sticky=tk.W
+        )
+        ttk.Label(cp_frame, text="(pixels, or 'auto')", foreground="gray").grid(
+            row=1, column=2, sticky=tk.W, padx=5
+        )
+
+        # Flow threshold
+        ttk.Label(cp_frame, text="Flow Threshold:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        self.pp_flow_thr = tk.DoubleVar(value=0.4)
+        ttk.Entry(cp_frame, textvariable=self.pp_flow_thr, width=10).grid(
+            row=2, column=1, padx=5, pady=2, sticky=tk.W
+        )
+
+        # Cell prob threshold
+        ttk.Label(cp_frame, text="Cell Prob Threshold:").grid(row=3, column=0, sticky=tk.W, pady=2)
+        self.pp_cellprob_thr = tk.DoubleVar(value=0.0)
+        ttk.Entry(cp_frame, textvariable=self.pp_cellprob_thr, width=10).grid(
+            row=3, column=1, padx=5, pady=2, sticky=tk.W
+        )
+
+        # ---- Buttons ----
+        btn_frame = ttk.Frame(tab)
+        btn_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Button(
+            btn_frame, text="Preview Channels", command=self._pp_preview_channels
+        ).pack(side=tk.LEFT, padx=5)
+
+        self.btn_pp_run = ttk.Button(
+            btn_frame, text="Generate Masks", command=self._pp_generate
+        )
+        self.btn_pp_run.pack(side=tk.LEFT, padx=5)
+
+        # Progress
+        self.pp_progress = ttk.Progressbar(tab, mode="determinate")
+        self.pp_progress.pack(fill=tk.X, padx=10, pady=5)
+
+        self.pp_status = tk.StringVar(value="Ready")
+        ttk.Label(tab, textvariable=self.pp_status).pack(padx=10, anchor=tk.W)
+
+        # Results table
+        result_frame = ttk.LabelFrame(tab, text="Results", padding=5)
+        result_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(5, 10))
+
+        columns = ("filename", "objects", "status")
+        self.pp_tree = ttk.Treeview(
+            result_frame, columns=columns, show="headings", height=8
+        )
+        self.pp_tree.heading("filename", text="Filename")
+        self.pp_tree.heading("objects", text="Objects Found")
+        self.pp_tree.heading("status", text="Status")
+        self.pp_tree.column("filename", width=350)
+        self.pp_tree.column("objects", width=120, anchor=tk.CENTER)
+        self.pp_tree.column("status", width=120, anchor=tk.CENTER)
+
+        pp_scroll = ttk.Scrollbar(
+            result_frame, orient=tk.VERTICAL, command=self.pp_tree.yview
+        )
+        self.pp_tree.configure(yscrollcommand=pp_scroll.set)
+        self.pp_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        pp_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+    def _pp_browse_img(self):
+        d = filedialog.askdirectory(title="Select Image Directory")
+        if d:
+            self.pp_img_dir.set(d)
+
+    def _pp_browse_out(self):
+        d = filedialog.askdirectory(title="Select Mask Output Directory")
+        if d:
+            self.pp_out_dir.set(d)
+
+    def _pp_on_model_changed(self, event=None):
+        if self.pp_model_var.get() == "Custom model...":
+            self.pp_model_entry.config(state=tk.NORMAL)
+            self.pp_model_btn.config(state=tk.NORMAL)
+        else:
+            self.pp_model_entry.config(state=tk.DISABLED)
+            self.pp_model_btn.config(state=tk.DISABLED)
+            self.pp_custom_model.set("")
+
+    def _pp_browse_model(self):
+        path = filedialog.askopenfilename(
+            title="Select Cellpose Model",
+            initialdir=str(PROJECT_ROOT / "models"),
+        )
+        if path:
+            self.pp_custom_model.set(path)
+
+    _CHANNEL_NAMES = {0: "DIC", 1: "mEGFP", 2: "mScarlet", 3: "miRFPnano3"}
+
+    def _pp_update_channel_labels(self, event=None):
+        seg = self.pp_seg_channel.get()
+        nuc = self.pp_nuc_channel.get()
+        self.pp_seg_label.set(self._CHANNEL_NAMES.get(seg, f"Channel {seg}"))
+        if nuc == 0:
+            self.pp_nuc_label.set("None (grayscale)")
+        else:
+            self.pp_nuc_label.set(self._CHANNEL_NAMES.get(nuc, f"Channel {nuc}"))
+
+    def _pp_preview_channels(self):
+        """Save and open a channel preview for the first image."""
+        img_dir = self.pp_img_dir.get()
+        if not img_dir:
+            messagebox.showwarning("Missing", "Select an image directory first.")
+            return
+
+        from preprocess import save_channel_preview
+        import glob as _glob
+
+        extensions = ("*.tif", "*.tiff", "*.png", "*.jpg")
+        files = []
+        for ext in extensions:
+            files.extend(_glob.glob(os.path.join(img_dir, ext)))
+        files = sorted(files)
+
+        if not files:
+            messagebox.showinfo("Empty", "No images found in the directory.")
+            return
+
+        preview_dir = str(PROJECT_ROOT / "results" / "channel_previews")
+        try:
+            path = save_channel_preview(
+                files[0],
+                preview_dir,
+                lower_percentile=self.pp_lower_pct.get(),
+                upper_percentile=self.pp_upper_pct.get(),
+                tile_blocksize_dic=self.pp_tile_bs.get(),
+            )
+            self.pp_status.set(f"Channel preview saved: {path}")
+            logger.info(f"Channel preview saved to {path}")
+            messagebox.showinfo(
+                "Preview Saved",
+                f"Channel preview for {Path(files[0]).name} saved to:\n{path}\n\n"
+                "Open this file to inspect channel quality and normalization.",
+            )
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate preview:\n{e}")
+            logger.exception("Channel preview failed")
+
+    def _pp_generate(self):
+        """Generate draft masks in a background thread."""
+        img_dir = self.pp_img_dir.get()
+        out_dir = self.pp_out_dir.get()
+        if not img_dir:
+            messagebox.showwarning("Missing", "Select an image directory.")
+            return
+
+        self.btn_pp_run.config(state=tk.DISABLED)
+        self.pp_tree.delete(*self.pp_tree.get_children())
+        self.pp_progress.config(mode="determinate", value=0)
+        self.pp_status.set("Generating masks...")
+
+        # Parse diameter
+        diam_str = self.pp_diameter.get().strip().lower()
+        diameter = None if diam_str in ("auto", "none", "") else float(diam_str)
+
+        # Parse model
+        model_path = None
+        if self.pp_model_var.get() == "Custom model...":
+            model_path = self.pp_custom_model.get() or None
+
+        def progress_cb(current, total, filename):
+            if total > 0:
+                pct = int(100 * current / total)
+                # Use thread-safe queue to update GUI
+                self.log_queue.put(f"__PP_PROGRESS__{pct}||{current}/{total}: {filename}")
+
+        def worker():
+            try:
+                from preprocess import generate_masks
+                results = generate_masks(
+                    image_dir=img_dir,
+                    output_dir=out_dir,
+                    segment_channel=self.pp_seg_channel.get(),
+                    nuclear_channel=self.pp_nuc_channel.get(),
+                    model_path=model_path,
+                    diameter=diameter,
+                    flow_threshold=self.pp_flow_thr.get(),
+                    cellprob_threshold=self.pp_cellprob_thr.get(),
+                    lower_percentile=self.pp_lower_pct.get(),
+                    upper_percentile=self.pp_upper_pct.get(),
+                    tile_blocksize_dic=self.pp_tile_bs.get(),
+                    invert_dic=self.pp_invert_dic.get(),
+                    use_gpu=True,
+                    progress_callback=progress_cb,
+                )
+                # Encode results for the GUI thread
+                encoded = "|".join(f"{name},{n}" for name, n in results)
+                self.log_queue.put(f"__PP_DONE__{encoded}")
+            except Exception as e:
+                logger.exception("Mask generation failed")
+                self.log_queue.put(f"__PP_ERROR__{e}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_pp_finished(self, results_str: str | None = None, error: str | None = None):
+        self.btn_pp_run.config(state=tk.NORMAL)
+        self.pp_progress.config(value=100)
+
+        if error:
+            self.pp_status.set(f"Error: {error}")
+            messagebox.showerror("Preprocessing Error", str(error))
+            return
+
+        if results_str:
+            entries = results_str.split("|")
+            total_objects = 0
+            for entry in entries:
+                if not entry:
+                    continue
+                name, n_str = entry.rsplit(",", 1)
+                n = int(n_str)
+                if n < 0:
+                    status = "FAILED"
+                elif n == 0:
+                    status = "No signal"
+                else:
+                    status = "OK"
+                    total_objects += n
+                self.pp_tree.insert("", tk.END, values=(name, n if n >= 0 else "-", status))
+
+            self.pp_status.set(
+                f"Done: {len(entries)} images processed, {total_objects} total objects. "
+                f"Masks saved to: {self.pp_out_dir.get()}"
+            )
+            messagebox.showinfo(
+                "Preprocessing Complete",
+                f"Generated draft masks for {len(entries)} images.\n"
+                f"Total objects detected: {total_objects}\n\n"
+                f"Masks saved to:\n{self.pp_out_dir.get()}\n\n"
+                "Review and curate the masks manually, then use the\n"
+                "File Renaming tab to prepare them for training.",
+            )
 
     # ==================================================================
     # TAB 1: FILE RENAMING
@@ -995,6 +1381,18 @@ class SegmentationGUI(tk.Tk):
                 continue
             if msg.startswith("__EVAL_ERROR__"):
                 self._on_eval_finished(error=msg[len("__EVAL_ERROR__"):])
+                continue
+            if msg.startswith("__PP_PROGRESS__"):
+                payload = msg[len("__PP_PROGRESS__"):]
+                pct_str, status_text = payload.split("||", 1)
+                self.pp_progress.config(value=int(pct_str))
+                self.pp_status.set(status_text)
+                continue
+            if msg.startswith("__PP_DONE__"):
+                self._on_pp_finished(results_str=msg[len("__PP_DONE__"):])
+                continue
+            if msg.startswith("__PP_ERROR__"):
+                self._on_pp_finished(error=msg[len("__PP_ERROR__"):])
                 continue
 
             # Append to training log
