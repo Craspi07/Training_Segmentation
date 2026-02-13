@@ -21,10 +21,13 @@ logger = logging.getLogger(__name__)
 
 
 def load_image(path: str) -> np.ndarray:
-    """Load an image from disk (supports TIFF, PNG, JPG)."""
+    """Load an image from disk (supports TIFF, PNG, JPG, ND2)."""
     ext = Path(path).suffix.lower()
     if ext in (".tif", ".tiff"):
         return tifffile.imread(path)
+    if ext == ".nd2":
+        import nd2
+        return nd2.imread(path)
     return skio.imread(path)
 
 
@@ -49,7 +52,7 @@ def find_image_pairs(
     Images are matched to masks by replacing image_filter with mask_filter
     in the filename stem. Supports common image formats.
     """
-    extensions = ("*.tif", "*.tiff", "*.png", "*.jpg", "*.jpeg")
+    extensions = ("*.tif", "*.tiff", "*.png", "*.jpg", "*.jpeg", "*.nd2")
     image_files = []
     for ext in extensions:
         image_files.extend(glob.glob(os.path.join(image_dir, ext)))
@@ -64,7 +67,7 @@ def find_image_pairs(
 
         # Search for mask with any supported extension
         mask_path = None
-        for ext in (".tif", ".tiff", ".png", ".jpg", ".jpeg"):
+        for ext in (".tif", ".tiff", ".png", ".jpg", ".jpeg", ".nd2"):
             candidate = os.path.join(mask_dir, mask_stem + ext)
             if os.path.exists(candidate):
                 mask_path = candidate

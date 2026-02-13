@@ -45,9 +45,13 @@ def load_multichannel_image(path: str) -> np.ndarray:
 
     Returns array with shape (C, H, W) for multi-channel or (H, W) for
     single-channel. Handles 8-bit, 16-bit, and float inputs.
+    Supports TIFF, PNG, JPG, and ND2 (Nikon NIS-Elements) formats.
     """
     ext = Path(path).suffix.lower()
-    if ext in (".tif", ".tiff"):
+    if ext == ".nd2":
+        import nd2
+        img = nd2.imread(path)
+    elif ext in (".tif", ".tiff"):
         img = tifffile.imread(path)
     else:
         img = skio.imread(path)
@@ -297,7 +301,7 @@ def generate_masks(
     os.makedirs(output_dir, exist_ok=True)
 
     # Find images
-    extensions = ("*.tif", "*.tiff", "*.png", "*.jpg", "*.jpeg")
+    extensions = ("*.tif", "*.tiff", "*.png", "*.jpg", "*.jpeg", "*.nd2")
     image_files = []
     for ext in extensions:
         image_files.extend(glob.glob(os.path.join(image_dir, ext)))

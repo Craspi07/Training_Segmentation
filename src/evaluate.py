@@ -57,7 +57,7 @@ def run_inference(
     model = models.CellposeModel(gpu=use_gpu, pretrained_model=model_path)
 
     # Find images
-    extensions = ("*.tif", "*.tiff", "*.png", "*.jpg", "*.jpeg")
+    extensions = ("*.tif", "*.tiff", "*.png", "*.jpg", "*.jpeg", "*.nd2")
     import glob
     image_files = []
     for ext in extensions:

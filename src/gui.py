@@ -365,7 +365,7 @@ class SegmentationGUI(tk.Tk):
         from preprocess import save_channel_preview
         import glob as _glob
 
-        extensions = ("*.tif", "*.tiff", "*.png", "*.jpg")
+        extensions = ("*.tif", "*.tiff", "*.png", "*.jpg", "*.nd2")
         files = []
         for ext in extensions:
             files.extend(_glob.glob(os.path.join(img_dir, ext)))
