@@ -14,7 +14,6 @@ import numpy as np
 import tifffile
 from skimage import io as skio
 from skimage.transform import resize
-from scipy.ndimage import elastic_transform as _scipy_elastic
 from scipy.ndimage import gaussian_filter, map_coordinates
 
 logger = logging.getLogger(__name__)
