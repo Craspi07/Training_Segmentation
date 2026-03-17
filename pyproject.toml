@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "cellseg_trainer"
+version = "0.1.0"
+description = "Production-quality cell segmentation training package for microscopy images"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+keywords = ["cell segmentation", "microscopy", "detectron2", "instance segmentation"]
+
+dependencies = [
+    "numpy>=1.24",
+    "opencv-python>=4.7",
+    "tifffile>=2023.7",
+    "pycocotools>=2.0",
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "pyyaml>=6.0",
+    "tqdm>=4.65",
+    "matplotlib>=3.7",
+    "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-cov"]
+ome = ["aicsimageio>=4.0"]
+
+[project.scripts]
+cellseg_trainer = "cellseg_trainer.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cellseg_trainer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
