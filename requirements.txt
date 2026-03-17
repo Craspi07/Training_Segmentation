@@ -8,4 +8,9 @@ bioimageio.core>=0.6
 pyyaml>=6.0
 matplotlib>=3.7
 torch>=2.0
+torchvision>=0.15
 tqdm>=4.65
+# detectron2 — install from source:
+# pip install 'git+https://github.com/facebookresearch/detectron2.git'
+opencv-python>=4.7
+pycocotools>=2.0

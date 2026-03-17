@@ -1,0 +1,63 @@
+# cellseg_trainer configuration
+# Merges with DEFAULTS in config_loader.py — only override what you need.
+
+DATASET:
+  TRAIN_IMAGE_DIR: "data/train/images"
+  TRAIN_MASK_DIR:  "data/train/masks"
+  VAL_IMAGE_DIR:   "data/val/images"
+  VAL_MASK_DIR:    "data/val/masks"
+  OUTPUT_DIR:      "dataset"
+  PATCH_SIZE:      512
+  PATCH_OVERLAP:   64
+  TRAIN_SPLIT:     0.85
+
+MODEL:
+  # Path to an existing Detectron2 YAML from a published paper
+  DETECTRON2_CONFIG: "configs_detectron2/mask_rcnn_R_50_FPN.yaml"
+  # Leave empty to use Detectron2 defaults, or point to a .pth checkpoint
+  WEIGHTS: ""
+  NUM_CLASSES: 1
+  FREEZE_BACKBONE: false
+
+TRAIN:
+  OUTPUT_DIR:         "output"
+  MAX_ITER:           5000
+  BASE_LR:            0.00025
+  BATCH_SIZE:         2
+  NUM_WORKERS:        4
+  MULTI_GPU:          true      # Uses all available GPUs (2 × 24 GB)
+  AMP:                true      # Mixed precision
+  CHECKPOINT_PERIOD:  500
+  EVAL_PERIOD:        500
+  FAST_FINETUNE:      false
+  FAST_FINETUNE_ITER: 1000
+  IMS_PER_BATCH:      2
+  ROI_BATCH_SIZE:     128
+
+AUGMENTATION:
+  ENABLE:                 true
+  FLIP_HORIZONTAL:        true
+  FLIP_VERTICAL:          true
+  ROTATION:               true
+  ROTATION_RANGE:         360     # degrees
+  INTENSITY_SCALE:        true
+  INTENSITY_SCALE_RANGE:  [0.8, 1.2]
+  GAUSSIAN_NOISE:         true
+  GAUSSIAN_NOISE_STD:     0.05
+  ELASTIC_DEFORMATION:    false
+  ELASTIC_ALPHA:          50.0
+  ELASTIC_SIGMA:          5.0
+
+INFERENCE:
+  SCORE_THRESH:   0.5
+  NMS_THRESH:     0.5
+  BATCH_SIZE:     1
+  OUTPUT_MASKS:   true
+  OUTPUT_OVERLAY: true
+  OUTPUT_JSON:    true
+
+ACTIVE_LEARNING:
+  CONFIDENCE_THRESHOLD:   0.6
+  MAX_SUGGESTIONS:        50
+  RETRAIN_THRESHOLD:      20
+  SELF_TRAIN_ITERATIONS:  3

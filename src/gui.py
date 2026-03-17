@@ -94,18 +94,21 @@ class SegmentationGUI(tk.Tk):
         self.tab_config = ttk.Frame(self.notebook)
         self.tab_train = ttk.Frame(self.notebook)
         self.tab_eval = ttk.Frame(self.notebook)
+        self.tab_detectron2 = ttk.Frame(self.notebook)
 
         self.notebook.add(self.tab_preprocess, text="  Preprocessing  ")
         self.notebook.add(self.tab_rename, text="  File Renaming  ")
         self.notebook.add(self.tab_config, text="  Configuration  ")
         self.notebook.add(self.tab_train, text="  Training  ")
         self.notebook.add(self.tab_eval, text="  Evaluation  ")
+        self.notebook.add(self.tab_detectron2, text="  Detectron2  ")
 
         self._build_preprocess_tab()
         self._build_rename_tab()
         self._build_config_tab()
         self._build_train_tab()
         self._build_eval_tab()
+        self._build_detectron2_tab()
 
     # ==================================================================
     # TAB 0: PREPROCESSING
@@ -1476,6 +1479,430 @@ class SegmentationGUI(tk.Tk):
                 self.eval_results.config(state=tk.DISABLED)
 
     # ==================================================================
+    # TAB 5: DETECTRON2 CELL SEGMENTATION TRAINER
+    # ==================================================================
+    def _build_detectron2_tab(self):
+        """Build the Detectron2 cellseg_trainer tab with sub-sections for
+        dataset conversion, training, inference, and active learning."""
+        tab = self.tab_detectron2
+
+        # Scrollable canvas so the tab content doesn't get clipped
+        canvas = tk.Canvas(tab)
+        scrollbar = ttk.Scrollbar(tab, orient="vertical", command=canvas.yview)
+        scroll_frame = ttk.Frame(canvas)
+        scroll_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Bind mouse wheel
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        PAD = {"padx": 8, "pady": 4}
+
+        # ----------------------------------------------------------------
+        # Section 1: Paths
+        # ----------------------------------------------------------------
+        path_frame = ttk.LabelFrame(scroll_frame, text="Paths", padding=10)
+        path_frame.pack(fill=tk.X, padx=10, pady=6)
+
+        self.d2_image_dir     = tk.StringVar()
+        self.d2_mask_dir      = tk.StringVar()
+        self.d2_dataset_dir   = tk.StringVar(value=str(PROJECT_ROOT / "dataset"))
+        self.d2_config_path   = tk.StringVar()
+        self.d2_weights_path  = tk.StringVar()
+        self.d2_output_dir    = tk.StringVar(value=str(PROJECT_ROOT / "output_detectron2"))
+        self.d2_infer_img_dir = tk.StringVar()
+        self.d2_infer_out_dir = tk.StringVar(value=str(PROJECT_ROOT / "predictions"))
+        self.d2_unlabelled_dir = tk.StringVar()
+
+        rows = [
+            ("Image Directory:",          self.d2_image_dir,     "dir"),
+            ("Mask Directory:",           self.d2_mask_dir,      "dir"),
+            ("Dataset Output Dir:",       self.d2_dataset_dir,   "dir"),
+            ("Detectron2 Config (YAML):", self.d2_config_path,   "file"),
+            ("Weights (.pth):",           self.d2_weights_path,  "file"),
+            ("Training Output Dir:",      self.d2_output_dir,    "dir"),
+            ("Inference Image Dir:",      self.d2_infer_img_dir, "dir"),
+            ("Inference Output Dir:",     self.d2_infer_out_dir, "dir"),
+            ("Unlabelled Images Dir:",    self.d2_unlabelled_dir,"dir"),
+        ]
+        for r, (label, var, kind) in enumerate(rows):
+            ttk.Label(path_frame, text=label).grid(row=r, column=0, sticky=tk.W, **PAD)
+            ttk.Entry(path_frame, textvariable=var, width=48).grid(row=r, column=1, padx=4)
+            cmd = (lambda v=var, k=kind: self._d2_browse(v, k))
+            ttk.Button(path_frame, text="Browse…", command=cmd).grid(row=r, column=2, padx=4)
+
+        # ----------------------------------------------------------------
+        # Section 2: Conversion options
+        # ----------------------------------------------------------------
+        conv_frame = ttk.LabelFrame(scroll_frame, text="Dataset Conversion", padding=10)
+        conv_frame.pack(fill=tk.X, padx=10, pady=6)
+
+        self.d2_mask_suffix   = tk.StringVar(value="_seg.npy")
+        self.d2_train_split   = tk.DoubleVar(value=0.85)
+        self.d2_patch_size    = tk.IntVar(value=512)
+        self.d2_patch_overlap = tk.IntVar(value=64)
+        self.d2_conv_workers  = tk.IntVar(value=4)
+
+        conv_opts = [
+            ("Mask suffix:",    self.d2_mask_suffix,   "entry", 12),
+            ("Train split:",    self.d2_train_split,   "entry", 6),
+            ("Patch size (0=off):", self.d2_patch_size, "entry", 6),
+            ("Patch overlap:",  self.d2_patch_overlap, "entry", 6),
+            ("Workers:",        self.d2_conv_workers,  "entry", 4),
+        ]
+        for c, (label, var, _, w) in enumerate(conv_opts):
+            ttk.Label(conv_frame, text=label).grid(row=0, column=c * 2, sticky=tk.E, padx=4)
+            ttk.Entry(conv_frame, textvariable=var, width=w).grid(row=0, column=c * 2 + 1, padx=2)
+
+        ttk.Button(
+            conv_frame, text="Convert Dataset → COCO",
+            command=self._d2_run_convert,
+        ).grid(row=1, column=0, columnspan=10, pady=6)
+
+        # ----------------------------------------------------------------
+        # Section 3: Training options
+        # ----------------------------------------------------------------
+        train_frame = ttk.LabelFrame(scroll_frame, text="Training", padding=10)
+        train_frame.pack(fill=tk.X, padx=10, pady=6)
+
+        self.d2_max_iter       = tk.IntVar(value=5000)
+        self.d2_base_lr        = tk.DoubleVar(value=0.00025)
+        self.d2_num_classes    = tk.IntVar(value=1)
+        self.d2_num_gpus       = tk.IntVar(value=2)
+        self.d2_multi_gpu      = tk.BooleanVar(value=True)
+        self.d2_amp            = tk.BooleanVar(value=True)
+        self.d2_freeze_backbone= tk.BooleanVar(value=False)
+        self.d2_fast_finetune  = tk.BooleanVar(value=False)
+        self.d2_resume         = tk.BooleanVar(value=False)
+
+        r0 = [
+            ("Max iter:",    self.d2_max_iter,    5),
+            ("Base LR:",     self.d2_base_lr,     8),
+            ("Num classes:", self.d2_num_classes, 4),
+            ("Num GPUs:",    self.d2_num_gpus,    3),
+        ]
+        for c, (lbl, var, w) in enumerate(r0):
+            ttk.Label(train_frame, text=lbl).grid(row=0, column=c * 2, sticky=tk.E, padx=4)
+            ttk.Entry(train_frame, textvariable=var, width=w).grid(row=0, column=c * 2 + 1, padx=2)
+
+        chk_row = ttk.Frame(train_frame)
+        chk_row.grid(row=1, column=0, columnspan=8, sticky=tk.W, pady=4)
+        for lbl, var in [
+            ("Multi-GPU", self.d2_multi_gpu),
+            ("AMP",       self.d2_amp),
+            ("Freeze backbone", self.d2_freeze_backbone),
+            ("Fast fine-tune", self.d2_fast_finetune),
+            ("Resume",    self.d2_resume),
+        ]:
+            ttk.Checkbutton(chk_row, text=lbl, variable=var).pack(side=tk.LEFT, padx=6)
+
+        ttk.Button(
+            train_frame, text="Start Training",
+            command=self._d2_run_train,
+        ).grid(row=2, column=0, columnspan=8, pady=6)
+
+        # ----------------------------------------------------------------
+        # Section 4: Inference options
+        # ----------------------------------------------------------------
+        inf_frame = ttk.LabelFrame(scroll_frame, text="Inference", padding=10)
+        inf_frame.pack(fill=tk.X, padx=10, pady=6)
+
+        self.d2_score_thresh  = tk.DoubleVar(value=0.5)
+        self.d2_device        = tk.StringVar(value="cuda:0")
+        self.d2_out_masks     = tk.BooleanVar(value=True)
+        self.d2_out_overlay   = tk.BooleanVar(value=True)
+        self.d2_out_json      = tk.BooleanVar(value=True)
+
+        inf_r0 = ttk.Frame(inf_frame)
+        inf_r0.pack(fill=tk.X, pady=2)
+        for lbl, var, w in [("Score thresh:", self.d2_score_thresh, 6), ("Device:", self.d2_device, 10)]:
+            ttk.Label(inf_r0, text=lbl).pack(side=tk.LEFT, padx=4)
+            ttk.Entry(inf_r0, textvariable=var, width=w).pack(side=tk.LEFT, padx=2)
+
+        inf_r1 = ttk.Frame(inf_frame)
+        inf_r1.pack(fill=tk.X, pady=2)
+        for lbl, var in [("Save masks", self.d2_out_masks), ("Save overlays", self.d2_out_overlay), ("Save JSON", self.d2_out_json)]:
+            ttk.Checkbutton(inf_r1, text=lbl, variable=var).pack(side=tk.LEFT, padx=6)
+
+        ttk.Button(
+            inf_frame, text="Run Inference",
+            command=self._d2_run_inference,
+        ).pack(pady=6)
+
+        # ----------------------------------------------------------------
+        # Section 5: Active Learning / Self-Training
+        # ----------------------------------------------------------------
+        al_frame = ttk.LabelFrame(scroll_frame, text="Active Learning / Self-Training", padding=10)
+        al_frame.pack(fill=tk.X, padx=10, pady=6)
+
+        self.d2_pseudo_thresh   = tk.DoubleVar(value=0.7)
+        self.d2_al_iterations   = tk.IntVar(value=3)
+        self.d2_suggest_only    = tk.BooleanVar(value=False)
+
+        al_r0 = ttk.Frame(al_frame)
+        al_r0.pack(fill=tk.X, pady=2)
+        for lbl, var, w in [
+            ("Pseudo-label threshold:", self.d2_pseudo_thresh, 6),
+            ("Iterations:",             self.d2_al_iterations, 4),
+        ]:
+            ttk.Label(al_r0, text=lbl).pack(side=tk.LEFT, padx=4)
+            ttk.Entry(al_r0, textvariable=var, width=w).pack(side=tk.LEFT, padx=2)
+
+        ttk.Checkbutton(al_frame, text="Suggest only (no retraining)", variable=self.d2_suggest_only).pack(anchor=tk.W, padx=4)
+
+        ttk.Button(
+            al_frame, text="Run Self-Training",
+            command=self._d2_run_self_train,
+        ).pack(pady=6)
+
+        # ----------------------------------------------------------------
+        # Section 6: Log / Progress
+        # ----------------------------------------------------------------
+        log_frame = ttk.LabelFrame(scroll_frame, text="Log", padding=6)
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=6)
+
+        self.d2_log = scrolledtext.ScrolledText(log_frame, height=14, state=tk.DISABLED,
+                                                 font=("Courier", 9))
+        self.d2_log.pack(fill=tk.BOTH, expand=True)
+
+        self.d2_progress = ttk.Progressbar(log_frame, mode="indeterminate", length=400)
+        self.d2_progress.pack(fill=tk.X, pady=4)
+
+        self.d2_status = tk.StringVar(value="Ready")
+        ttk.Label(log_frame, textvariable=self.d2_status, foreground="navy").pack(anchor=tk.W)
+
+        ttk.Button(log_frame, text="Clear Log", command=self._d2_clear_log).pack(anchor=tk.E, pady=2)
+
+    # ------------------------------------------------------------------
+    # Detectron2 tab helpers
+    # ------------------------------------------------------------------
+    def _d2_browse(self, var: tk.StringVar, kind: str) -> None:
+        if kind == "file":
+            path = filedialog.askopenfilename()
+        else:
+            path = filedialog.askdirectory()
+        if path:
+            var.set(path)
+
+    def _d2_log_msg(self, msg: str) -> None:
+        self.d2_log.config(state=tk.NORMAL)
+        self.d2_log.insert(tk.END, msg + "\n")
+        self.d2_log.see(tk.END)
+        self.d2_log.config(state=tk.DISABLED)
+
+    def _d2_clear_log(self) -> None:
+        self.d2_log.config(state=tk.NORMAL)
+        self.d2_log.delete("1.0", tk.END)
+        self.d2_log.config(state=tk.DISABLED)
+
+    def _d2_run_convert(self) -> None:
+        """Convert Cellpose masks to COCO dataset in a background thread."""
+        image_dir = self.d2_image_dir.get().strip()
+        mask_dir  = self.d2_mask_dir.get().strip()
+        output_dir = self.d2_dataset_dir.get().strip()
+
+        if not image_dir or not mask_dir or not output_dir:
+            messagebox.showerror("Missing paths", "Please set Image, Mask, and Dataset directories.")
+            return
+
+        self.d2_progress.start()
+        self.d2_status.set("Converting dataset …")
+
+        def worker():
+            try:
+                sys.path.insert(0, str(PROJECT_ROOT))
+                from cellseg_trainer.coco_builder import build_coco_dataset
+                from cellseg_trainer.patch_extractor import extract_and_save_patches
+
+                img_dir_path = Path(image_dir)
+                msk_dir_path = Path(mask_dir)
+                out_path = Path(output_dir)
+                mask_suffix = self.d2_mask_suffix.get().strip()
+                patch_size = self.d2_patch_size.get()
+                overlap = self.d2_patch_overlap.get()
+
+                if patch_size > 0:
+                    patch_dir = out_path / "patches"
+                    n = extract_and_save_patches(
+                        image_dir=img_dir_path, mask_dir=msk_dir_path,
+                        output_dir=patch_dir, patch_size=patch_size,
+                        overlap=overlap, mask_suffix=mask_suffix,
+                    )
+                    self.log_queue.put(f"Extracted {n} patches")
+                    img_dir_path = patch_dir / "images"
+                    msk_dir_path = patch_dir / "masks"
+                    mask_suffix = "_mask.tif"
+
+                train_j, val_j = build_coco_dataset(
+                    image_dir=img_dir_path, mask_dir=msk_dir_path,
+                    output_dir=out_path,
+                    train_split=self.d2_train_split.get(),
+                    mask_suffix=mask_suffix,
+                    n_workers=self.d2_conv_workers.get(),
+                )
+                self.log_queue.put(f"__D2_DONE__Dataset ready\n  Train: {train_j}\n  Val:   {val_j}")
+            except Exception as exc:
+                self.log_queue.put(f"__D2_ERROR__{exc}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _d2_run_train(self) -> None:
+        """Launch Detectron2 training in a background thread."""
+        d2_config = self.d2_config_path.get().strip()
+        dataset   = self.d2_dataset_dir.get().strip()
+        output    = self.d2_output_dir.get().strip()
+
+        if not d2_config or not dataset or not output:
+            messagebox.showerror("Missing paths", "Detectron2 Config, Dataset Dir and Output Dir are required.")
+            return
+
+        self.d2_progress.start()
+        self.d2_status.set("Training …")
+
+        def worker():
+            try:
+                sys.path.insert(0, str(PROJECT_ROOT))
+                from cellseg_trainer.config_loader import DEFAULTS, override_from_args
+                from cellseg_trainer.training import train
+
+                cfg = dict(DEFAULTS)
+                weights = self.d2_weights_path.get().strip()
+                cfg = override_from_args(
+                    cfg,
+                    **{
+                        "TRAIN.MAX_ITER":        self.d2_max_iter.get(),
+                        "TRAIN.BASE_LR":         self.d2_base_lr.get(),
+                        "TRAIN.MULTI_GPU":       self.d2_multi_gpu.get(),
+                        "TRAIN.AMP":             self.d2_amp.get(),
+                        "TRAIN.FAST_FINETUNE":   self.d2_fast_finetune.get(),
+                        "MODEL.FREEZE_BACKBONE": self.d2_freeze_backbone.get(),
+                        "MODEL.WEIGHTS":         weights if weights else None,
+                        "MODEL.NUM_CLASSES":     self.d2_num_classes.get(),
+                        "DATASET.PATCH_SIZE":    self.d2_patch_size.get() or 512,
+                    },
+                )
+                model_path = train(
+                    d2_config_path=d2_config,
+                    cellseg_config=cfg,
+                    dataset_dir=dataset,
+                    output_dir=output,
+                    multi_gpu=self.d2_multi_gpu.get(),
+                    amp=self.d2_amp.get(),
+                    num_gpus=self.d2_num_gpus.get() or None,
+                    resume=self.d2_resume.get(),
+                )
+                self.log_queue.put(f"__D2_DONE__Training complete → {model_path}")
+            except Exception as exc:
+                self.log_queue.put(f"__D2_ERROR__{exc}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _d2_run_inference(self) -> None:
+        """Run Detectron2 inference in a background thread."""
+        d2_config  = self.d2_config_path.get().strip()
+        weights    = self.d2_weights_path.get().strip()
+        image_dir  = self.d2_infer_img_dir.get().strip()
+        output_dir = self.d2_infer_out_dir.get().strip()
+
+        if not all([d2_config, weights, image_dir, output_dir]):
+            messagebox.showerror("Missing paths", "Detectron2 Config, Weights, Image Dir, and Output Dir are required.")
+            return
+
+        self.d2_progress.start()
+        self.d2_status.set("Running inference …")
+
+        def worker():
+            try:
+                sys.path.insert(0, str(PROJECT_ROOT))
+                from cellseg_trainer.inference import run_inference
+
+                results = run_inference(
+                    model_path=weights,
+                    d2_config_path=d2_config,
+                    image_dir=image_dir,
+                    output_dir=output_dir,
+                    score_thresh=self.d2_score_thresh.get(),
+                    device=self.d2_device.get(),
+                    output_masks=self.d2_out_masks.get(),
+                    output_overlay=self.d2_out_overlay.get(),
+                    output_json=self.d2_out_json.get(),
+                )
+                msg = (
+                    f"Inference complete\n"
+                    f"  Images: {results['n_images']}\n"
+                    f"  Total instances: {results['n_total_instances']}\n"
+                    f"  Output: {output_dir}"
+                )
+                self.log_queue.put(f"__D2_DONE__{msg}")
+            except Exception as exc:
+                self.log_queue.put(f"__D2_ERROR__{exc}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _d2_run_self_train(self) -> None:
+        """Run the self-training / active learning loop."""
+        d2_config     = self.d2_config_path.get().strip()
+        weights       = self.d2_weights_path.get().strip()
+        dataset       = self.d2_dataset_dir.get().strip()
+        unlabelled    = self.d2_unlabelled_dir.get().strip()
+        output_dir    = self.d2_output_dir.get().strip()
+
+        if not all([d2_config, weights, dataset, unlabelled, output_dir]):
+            messagebox.showerror(
+                "Missing paths",
+                "Detectron2 Config, Weights, Dataset Dir, Unlabelled Dir, and Output Dir are all required."
+            )
+            return
+
+        self.d2_progress.start()
+        self.d2_status.set("Self-training …")
+
+        def worker():
+            try:
+                sys.path.insert(0, str(PROJECT_ROOT))
+                from cellseg_trainer.config_loader import DEFAULTS
+                from cellseg_trainer.active_learning import self_train, find_uncertain_patches
+
+                cfg = dict(DEFAULTS)
+
+                if self.d2_suggest_only.get():
+                    pred_json = Path(output_dir) / "predictions.json"
+                    copied = find_uncertain_patches(
+                        predictions_json=pred_json,
+                        image_dir=unlabelled,
+                        output_dir=Path(output_dir) / "for_review",
+                        confidence_threshold=self.d2_pseudo_thresh.get(),
+                    )
+                    self.log_queue.put(f"__D2_DONE__Flagged {len(copied)} images for review → {Path(output_dir) / 'for_review'}")
+                    return
+
+                final_model = self_train(
+                    d2_config_path=d2_config,
+                    cellseg_config=cfg,
+                    initial_model=weights,
+                    unlabelled_dir=unlabelled,
+                    dataset_dir=dataset,
+                    output_dir=output_dir,
+                    n_iterations=self.d2_al_iterations.get(),
+                    pseudo_label_threshold=self.d2_pseudo_thresh.get(),
+                    progress_callback=lambda m: self.log_queue.put(m),
+                )
+                self.log_queue.put(f"__D2_DONE__Self-training complete → {final_model}")
+            except Exception as exc:
+                self.log_queue.put(f"__D2_ERROR__{exc}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    # ==================================================================
     # LOGGING
     # ==================================================================
     def _setup_logging(self):
@@ -1519,6 +1946,15 @@ class SegmentationGUI(tk.Tk):
             if msg.startswith("__PP_ERROR__"):
                 self._on_pp_finished(error=msg[len("__PP_ERROR__"):])
                 continue
+            if msg.startswith("__D2_DONE__"):
+                self._on_d2_finished(message=msg[len("__D2_DONE__"):])
+                continue
+            if msg.startswith("__D2_ERROR__"):
+                self._on_d2_finished(error=msg[len("__D2_ERROR__"):])
+                continue
+
+            # Append to training log AND Detectron2 log
+            self._d2_log_msg(msg)
 
             # Append to training log
             self.train_log.config(state=tk.NORMAL)
@@ -1527,6 +1963,18 @@ class SegmentationGUI(tk.Tk):
             self.train_log.config(state=tk.DISABLED)
 
         self.after(100, self._poll_log_queue)
+
+    def _on_d2_finished(self, message: str | None = None, error: str | None = None) -> None:
+        """Called when a Detectron2 background task completes."""
+        self.d2_progress.stop()
+        if error:
+            self.d2_status.set(f"Error: {error}")
+            self._d2_log_msg(f"[ERROR] {error}")
+            messagebox.showerror("Detectron2 Error", str(error))
+        else:
+            self.d2_status.set("Done")
+            if message:
+                self._d2_log_msg(message)
 
     # ==================================================================
     # MISC
