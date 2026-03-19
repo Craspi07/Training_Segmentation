@@ -298,11 +298,22 @@ if __name__ == "__main__":
     )
 
     parser = argparse.ArgumentParser(description="Evaluate Cellpose segmentation model")
-    parser.add_argument("--config", type=str, required=True, help="YAML config path")
+    parser.add_argument("--config", type=str, default=None, help="YAML config path (required for full evaluation)")
     parser.add_argument("--model", type=str, required=True, help="Path to trained model")
+    parser.add_argument("--image-dir", type=str, default=None, help="Image directory (inference-only mode)")
+    parser.add_argument("--output-dir", type=str, default="results/inference", help="Output directory (inference-only mode)")
     args = parser.parse_args()
 
-    with open(args.config) as f:
-        config = yaml.safe_load(f)
-
-    evaluate_model(config, args.model)
+    if args.image_dir:
+        masks, names = run_inference(
+            model_path=args.model,
+            image_dir=args.image_dir,
+            output_dir=args.output_dir,
+        )
+        print(f"Inference complete: {len(masks)} images processed")
+    elif args.config:
+        with open(args.config) as f:
+            config = yaml.safe_load(f)
+        evaluate_model(config, args.model)
+    else:
+        parser.error("Either --config or --image-dir must be provided")

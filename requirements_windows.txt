@@ -1,0 +1,4 @@
+# Minimal requirements to run the GUI on Windows.
+# Heavy ML packages (cellpose, detectron2, torch) are NOT needed here —
+# they run inside the Docker container.
+pyyaml
