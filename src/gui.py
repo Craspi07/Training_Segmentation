@@ -70,6 +70,8 @@ class SegmentationGUI(tk.Tk):
         # Docker settings for running ML on Windows
         self.docker_container = tk.StringVar(value=os.environ.get("DOCKER_CONTAINER", ""))
         self.container_root = tk.StringVar(value=os.environ.get("CONTAINER_PROJECT_ROOT", _CONTAINER_DEFAULT_ROOT))
+        # Python interpreter inside the Detectron2 venv in Docker
+        self.d2_docker_python = tk.StringVar(value=os.environ.get("D2_DOCKER_PYTHON", "/delectron_enve/bin/python"))
 
         self._build_menu()
         self._build_tabs()
@@ -1583,7 +1585,26 @@ class SegmentationGUI(tk.Tk):
         PAD = {"padx": 8, "pady": 4}
 
         # ----------------------------------------------------------------
-        # Section 0: Dependency status
+        # Section 0a: Docker connection
+        # ----------------------------------------------------------------
+        docker_frame = ttk.LabelFrame(scroll_frame, text="Docker Connection (required on Windows)", padding=8)
+        docker_frame.pack(fill=tk.X, padx=10, pady=6)
+
+        ttk.Label(docker_frame, text="Container name/ID:").grid(row=0, column=0, sticky=tk.W, padx=(0, 4))
+        ttk.Entry(docker_frame, textvariable=self.docker_container, width=25).grid(row=0, column=1, sticky=tk.W)
+        ttk.Label(docker_frame, text="  Python (venv):").grid(row=0, column=2, sticky=tk.W, padx=(12, 4))
+        ttk.Entry(docker_frame, textvariable=self.d2_docker_python, width=32).grid(row=0, column=3, sticky=tk.W)
+        ttk.Label(docker_frame, text="  Container project root:").grid(row=0, column=4, sticky=tk.W, padx=(12, 4))
+        ttk.Entry(docker_frame, textvariable=self.container_root, width=30).grid(row=0, column=5, sticky=tk.W)
+
+        ttk.Label(
+            docker_frame,
+            text="Tip: get your container name with  docker ps  in a terminal on Windows.",
+            foreground="gray",
+        ).grid(row=1, column=0, columnspan=6, sticky=tk.W, pady=(4, 0))
+
+        # ----------------------------------------------------------------
+        # Section 0b: Dependency status
         # ----------------------------------------------------------------
         dep_frame = ttk.LabelFrame(scroll_frame, text="Dependencies", padding=8)
         dep_frame.pack(fill=tk.X, padx=10, pady=6)
@@ -1790,42 +1811,50 @@ class SegmentationGUI(tk.Tk):
     def _d2_check_deps(self) -> dict[str, bool]:
         """Import-check each required package and update status labels.
 
+        When a Docker container is configured the check runs inside it using
+        the configured venv Python.  Otherwise it checks the local environment.
+
         Returns:
             Dict mapping package name to availability bool.
         """
-        import importlib
-
-        _IMPORT_NAMES = {
-            "torch": "torch",
-            "torchvision": "torchvision",
-            "detectron2": "detectron2",
-            "cv2": "cv2",
-            "pycocotools": "pycocotools",
-            "tifffile": "tifffile",
-        }
-
+        deps = ["torch", "torchvision", "detectron2", "cv2", "pycocotools", "tifffile"]
         status: dict[str, bool] = {}
-        for dep, module in _IMPORT_NAMES.items():
-            try:
-                importlib.import_module(module)
-                ok = True
-            except ImportError:
-                ok = False
+
+        container = self.docker_container.get().strip()
+        python = self.d2_docker_python.get().strip() if container else None
+
+        for dep in deps:
+            if container and python:
+                try:
+                    result = subprocess.run(
+                        ["docker", "exec", container, python, "-c", f"import {dep}"],
+                        capture_output=True, timeout=15,
+                    )
+                    ok = result.returncode == 0
+                except Exception:
+                    ok = False
+            else:
+                import importlib
+                try:
+                    importlib.import_module(dep)
+                    ok = True
+                except ImportError:
+                    ok = False
+
             status[dep] = ok
             lbl = self._d2_dep_labels.get(dep)
             if lbl:
-                lbl.config(text="✓" if ok else "✗",
-                           fg="green" if ok else "red")
+                lbl.config(text="✓" if ok else "✗", fg="green" if ok else "red")
 
-        all_ok = all(status.values())
         missing = [k for k, v in status.items() if not v]
+        src = f"Docker ({container})" if container else "local environment"
         if missing:
             self._d2_log_msg(
-                f"[DEPS] Missing packages: {', '.join(missing)}\n"
+                f"[DEPS] Missing in {src}: {', '.join(missing)}\n"
                 "       Click 'Show Install Guide' for installation instructions."
             )
         else:
-            self._d2_log_msg("[DEPS] All dependencies found ✓")
+            self._d2_log_msg(f"[DEPS] All dependencies found in {src} ✓")
         return status
 
     def _d2_show_install_guide(self) -> None:
@@ -1979,37 +2008,56 @@ After installation, click 'Check Dependencies' to verify all packages are found.
 
         def worker():
             try:
-                sys.path.insert(0, str(PROJECT_ROOT))
-                from cellseg_trainer.coco_builder import build_coco_dataset
-                from cellseg_trainer.patch_extractor import extract_and_save_patches
+                container = self.docker_container.get().strip()
+                if container:
+                    python = self.d2_docker_python.get().strip()
+                    cmd = [
+                        python, "-m", "cellseg_trainer", "convert",
+                        "--images",      self._to_container_path(image_dir),
+                        "--masks",       self._to_container_path(mask_dir),
+                        "--output",      self._to_container_path(output_dir),
+                        "--mask-suffix", self.d2_mask_suffix.get().strip(),
+                        "--train-split", str(self.d2_train_split.get()),
+                        "--workers",     str(self.d2_conv_workers.get()),
+                        "--patch-size",  str(self.d2_patch_size.get()),
+                        "--overlap",     str(self.d2_patch_overlap.get()),
+                    ]
+                    rc = self._run_docker_cmd(container, cmd)
+                    if rc != 0:
+                        raise RuntimeError(f"docker exec exited with code {rc}")
+                    self.log_queue.put("__D2_DONE__Dataset conversion complete")
+                else:
+                    sys.path.insert(0, str(PROJECT_ROOT))
+                    from cellseg_trainer.coco_builder import build_coco_dataset
+                    from cellseg_trainer.patch_extractor import extract_and_save_patches
 
-                img_dir_path = Path(image_dir)
-                msk_dir_path = Path(mask_dir)
-                out_path = Path(output_dir)
-                mask_suffix = self.d2_mask_suffix.get().strip()
-                patch_size = self.d2_patch_size.get()
-                overlap = self.d2_patch_overlap.get()
+                    img_dir_path = Path(image_dir)
+                    msk_dir_path = Path(mask_dir)
+                    out_path = Path(output_dir)
+                    mask_suffix = self.d2_mask_suffix.get().strip()
+                    patch_size = self.d2_patch_size.get()
+                    overlap = self.d2_patch_overlap.get()
 
-                if patch_size > 0:
-                    patch_dir = out_path / "patches"
-                    n = extract_and_save_patches(
+                    if patch_size > 0:
+                        patch_dir = out_path / "patches"
+                        n = extract_and_save_patches(
+                            image_dir=img_dir_path, mask_dir=msk_dir_path,
+                            output_dir=patch_dir, patch_size=patch_size,
+                            overlap=overlap, mask_suffix=mask_suffix,
+                        )
+                        self.log_queue.put(f"Extracted {n} patches")
+                        img_dir_path = patch_dir / "images"
+                        msk_dir_path = patch_dir / "masks"
+                        mask_suffix = "_mask.tif"
+
+                    train_j, val_j = build_coco_dataset(
                         image_dir=img_dir_path, mask_dir=msk_dir_path,
-                        output_dir=patch_dir, patch_size=patch_size,
-                        overlap=overlap, mask_suffix=mask_suffix,
+                        output_dir=out_path,
+                        train_split=self.d2_train_split.get(),
+                        mask_suffix=mask_suffix,
+                        n_workers=self.d2_conv_workers.get(),
                     )
-                    self.log_queue.put(f"Extracted {n} patches")
-                    img_dir_path = patch_dir / "images"
-                    msk_dir_path = patch_dir / "masks"
-                    mask_suffix = "_mask.tif"
-
-                train_j, val_j = build_coco_dataset(
-                    image_dir=img_dir_path, mask_dir=msk_dir_path,
-                    output_dir=out_path,
-                    train_split=self.d2_train_split.get(),
-                    mask_suffix=mask_suffix,
-                    n_workers=self.d2_conv_workers.get(),
-                )
-                self.log_queue.put(f"__D2_DONE__Dataset ready\n  Train: {train_j}\n  Val:   {val_j}")
+                    self.log_queue.put(f"__D2_DONE__Dataset ready\n  Train: {train_j}\n  Val:   {val_j}")
             except Exception as exc:
                 self.log_queue.put(f"__D2_ERROR__{exc}")
 
@@ -2033,37 +2081,66 @@ After installation, click 'Check Dependencies' to verify all packages are found.
 
         def worker():
             try:
-                sys.path.insert(0, str(PROJECT_ROOT))
-                from cellseg_trainer.config_loader import DEFAULTS, override_from_args
-                from cellseg_trainer.training import train
-
-                cfg = dict(DEFAULTS)
+                container = self.docker_container.get().strip()
                 weights = self.d2_weights_path.get().strip()
-                cfg = override_from_args(
-                    cfg,
-                    **{
-                        "TRAIN.MAX_ITER":        self.d2_max_iter.get(),
-                        "TRAIN.BASE_LR":         self.d2_base_lr.get(),
-                        "TRAIN.MULTI_GPU":       self.d2_multi_gpu.get(),
-                        "TRAIN.AMP":             self.d2_amp.get(),
-                        "TRAIN.FAST_FINETUNE":   self.d2_fast_finetune.get(),
-                        "MODEL.FREEZE_BACKBONE": self.d2_freeze_backbone.get(),
-                        "MODEL.WEIGHTS":         weights if weights else None,
-                        "MODEL.NUM_CLASSES":     self.d2_num_classes.get(),
-                        "DATASET.PATCH_SIZE":    self.d2_patch_size.get() or 512,
-                    },
-                )
-                model_path = train(
-                    d2_config_path=d2_config,
-                    cellseg_config=cfg,
-                    dataset_dir=dataset,
-                    output_dir=output,
-                    multi_gpu=self.d2_multi_gpu.get(),
-                    amp=self.d2_amp.get(),
-                    num_gpus=self.d2_num_gpus.get() or None,
-                    resume=self.d2_resume.get(),
-                )
-                self.log_queue.put(f"__D2_DONE__Training complete → {model_path}")
+                if container:
+                    python = self.d2_docker_python.get().strip()
+                    cmd = [
+                        python, "-m", "cellseg_trainer", "train",
+                        "--dataset",    self._to_container_path(dataset),
+                        "--d2-config",  self._to_container_path(d2_config),
+                        "--output",     self._to_container_path(output),
+                        "--max-iter",   str(self.d2_max_iter.get()),
+                        "--lr",         str(self.d2_base_lr.get()),
+                        "--num-classes",str(self.d2_num_classes.get()),
+                        "--num-gpus",   str(self.d2_num_gpus.get()),
+                        "--patch-size", str(self.d2_patch_size.get() or 512),
+                    ]
+                    if weights:
+                        cmd += ["--weights", self._to_container_path(weights)]
+                    cmd.append("--multi-gpu" if self.d2_multi_gpu.get() else "--no-multi-gpu")
+                    cmd.append("--amp" if self.d2_amp.get() else "--no-amp")
+                    if self.d2_freeze_backbone.get():
+                        cmd.append("--freeze-backbone")
+                    if self.d2_fast_finetune.get():
+                        cmd.append("--fast-finetune")
+                    if self.d2_resume.get():
+                        cmd.append("--resume")
+                    rc = self._run_docker_cmd(container, cmd)
+                    if rc != 0:
+                        raise RuntimeError(f"docker exec exited with code {rc}")
+                    self.log_queue.put(f"__D2_DONE__Training complete → {self._to_container_path(output)}")
+                else:
+                    sys.path.insert(0, str(PROJECT_ROOT))
+                    from cellseg_trainer.config_loader import DEFAULTS, override_from_args
+                    from cellseg_trainer.training import train
+
+                    cfg = dict(DEFAULTS)
+                    cfg = override_from_args(
+                        cfg,
+                        **{
+                            "TRAIN.MAX_ITER":        self.d2_max_iter.get(),
+                            "TRAIN.BASE_LR":         self.d2_base_lr.get(),
+                            "TRAIN.MULTI_GPU":       self.d2_multi_gpu.get(),
+                            "TRAIN.AMP":             self.d2_amp.get(),
+                            "TRAIN.FAST_FINETUNE":   self.d2_fast_finetune.get(),
+                            "MODEL.FREEZE_BACKBONE": self.d2_freeze_backbone.get(),
+                            "MODEL.WEIGHTS":         weights if weights else None,
+                            "MODEL.NUM_CLASSES":     self.d2_num_classes.get(),
+                            "DATASET.PATCH_SIZE":    self.d2_patch_size.get() or 512,
+                        },
+                    )
+                    model_path = train(
+                        d2_config_path=d2_config,
+                        cellseg_config=cfg,
+                        dataset_dir=dataset,
+                        output_dir=output,
+                        multi_gpu=self.d2_multi_gpu.get(),
+                        amp=self.d2_amp.get(),
+                        num_gpus=self.d2_num_gpus.get() or None,
+                        resume=self.d2_resume.get(),
+                    )
+                    self.log_queue.put(f"__D2_DONE__Training complete → {model_path}")
             except Exception as exc:
                 self.log_queue.put(f"__D2_ERROR__{exc}")
 
@@ -2088,27 +2165,50 @@ After installation, click 'Check Dependencies' to verify all packages are found.
 
         def worker():
             try:
-                sys.path.insert(0, str(PROJECT_ROOT))
-                from cellseg_trainer.inference import run_inference
+                container = self.docker_container.get().strip()
+                if container:
+                    python = self.d2_docker_python.get().strip()
+                    cmd = [
+                        python, "-m", "cellseg_trainer", "predict",
+                        "--model",        self._to_container_path(weights),
+                        "--d2-config",    self._to_container_path(d2_config),
+                        "--images",       self._to_container_path(image_dir),
+                        "--output",       self._to_container_path(output_dir),
+                        "--score-thresh", str(self.d2_score_thresh.get()),
+                        "--device",       self.d2_device.get(),
+                    ]
+                    if not self.d2_out_masks.get():
+                        cmd.append("--no-masks")
+                    if not self.d2_out_overlay.get():
+                        cmd.append("--no-overlay")
+                    if not self.d2_out_json.get():
+                        cmd.append("--no-json")
+                    rc = self._run_docker_cmd(container, cmd)
+                    if rc != 0:
+                        raise RuntimeError(f"docker exec exited with code {rc}")
+                    self.log_queue.put(f"__D2_DONE__Inference complete → {self._to_container_path(output_dir)}")
+                else:
+                    sys.path.insert(0, str(PROJECT_ROOT))
+                    from cellseg_trainer.inference import run_inference
 
-                results = run_inference(
-                    model_path=weights,
-                    d2_config_path=d2_config,
-                    image_dir=image_dir,
-                    output_dir=output_dir,
-                    score_thresh=self.d2_score_thresh.get(),
-                    device=self.d2_device.get(),
-                    output_masks=self.d2_out_masks.get(),
-                    output_overlay=self.d2_out_overlay.get(),
-                    output_json=self.d2_out_json.get(),
-                )
-                msg = (
-                    f"Inference complete\n"
-                    f"  Images: {results['n_images']}\n"
-                    f"  Total instances: {results['n_total_instances']}\n"
-                    f"  Output: {output_dir}"
-                )
-                self.log_queue.put(f"__D2_DONE__{msg}")
+                    results = run_inference(
+                        model_path=weights,
+                        d2_config_path=d2_config,
+                        image_dir=image_dir,
+                        output_dir=output_dir,
+                        score_thresh=self.d2_score_thresh.get(),
+                        device=self.d2_device.get(),
+                        output_masks=self.d2_out_masks.get(),
+                        output_overlay=self.d2_out_overlay.get(),
+                        output_json=self.d2_out_json.get(),
+                    )
+                    msg = (
+                        f"Inference complete\n"
+                        f"  Images: {results['n_images']}\n"
+                        f"  Total instances: {results['n_total_instances']}\n"
+                        f"  Output: {output_dir}"
+                    )
+                    self.log_queue.put(f"__D2_DONE__{msg}")
             except Exception as exc:
                 self.log_queue.put(f"__D2_ERROR__{exc}")
 
@@ -2137,35 +2237,55 @@ After installation, click 'Check Dependencies' to verify all packages are found.
 
         def worker():
             try:
-                sys.path.insert(0, str(PROJECT_ROOT))
-                from cellseg_trainer.config_loader import DEFAULTS
-                from cellseg_trainer.active_learning import self_train, find_uncertain_patches
+                container = self.docker_container.get().strip()
+                if container:
+                    python = self.d2_docker_python.get().strip()
+                    cmd = [
+                        python, "-m", "cellseg_trainer", "self-train",
+                        "--dataset",      self._to_container_path(dataset),
+                        "--model",        self._to_container_path(weights),
+                        "--d2-config",    self._to_container_path(d2_config),
+                        "--unlabelled",   self._to_container_path(unlabelled),
+                        "--output",       self._to_container_path(output_dir),
+                        "--iterations",   str(self.d2_al_iterations.get()),
+                        "--pseudo-thresh",str(self.d2_pseudo_thresh.get()),
+                    ]
+                    if self.d2_suggest_only.get():
+                        cmd.append("--suggest-only")
+                    rc = self._run_docker_cmd(container, cmd)
+                    if rc != 0:
+                        raise RuntimeError(f"docker exec exited with code {rc}")
+                    self.log_queue.put(f"__D2_DONE__Self-training complete → {self._to_container_path(output_dir)}")
+                else:
+                    sys.path.insert(0, str(PROJECT_ROOT))
+                    from cellseg_trainer.config_loader import DEFAULTS
+                    from cellseg_trainer.active_learning import self_train, find_uncertain_patches
 
-                cfg = dict(DEFAULTS)
+                    cfg = dict(DEFAULTS)
 
-                if self.d2_suggest_only.get():
-                    pred_json = Path(output_dir) / "predictions.json"
-                    copied = find_uncertain_patches(
-                        predictions_json=pred_json,
-                        image_dir=unlabelled,
-                        output_dir=Path(output_dir) / "for_review",
-                        confidence_threshold=self.d2_pseudo_thresh.get(),
+                    if self.d2_suggest_only.get():
+                        pred_json = Path(output_dir) / "predictions.json"
+                        copied = find_uncertain_patches(
+                            predictions_json=pred_json,
+                            image_dir=unlabelled,
+                            output_dir=Path(output_dir) / "for_review",
+                            confidence_threshold=self.d2_pseudo_thresh.get(),
+                        )
+                        self.log_queue.put(f"__D2_DONE__Flagged {len(copied)} images for review → {Path(output_dir) / 'for_review'}")
+                        return
+
+                    final_model = self_train(
+                        d2_config_path=d2_config,
+                        cellseg_config=cfg,
+                        initial_model=weights,
+                        unlabelled_dir=unlabelled,
+                        dataset_dir=dataset,
+                        output_dir=output_dir,
+                        n_iterations=self.d2_al_iterations.get(),
+                        pseudo_label_threshold=self.d2_pseudo_thresh.get(),
+                        progress_callback=lambda m: self.log_queue.put(m),
                     )
-                    self.log_queue.put(f"__D2_DONE__Flagged {len(copied)} images for review → {Path(output_dir) / 'for_review'}")
-                    return
-
-                final_model = self_train(
-                    d2_config_path=d2_config,
-                    cellseg_config=cfg,
-                    initial_model=weights,
-                    unlabelled_dir=unlabelled,
-                    dataset_dir=dataset,
-                    output_dir=output_dir,
-                    n_iterations=self.d2_al_iterations.get(),
-                    pseudo_label_threshold=self.d2_pseudo_thresh.get(),
-                    progress_callback=lambda m: self.log_queue.put(m),
-                )
-                self.log_queue.put(f"__D2_DONE__Self-training complete → {final_model}")
+                    self.log_queue.put(f"__D2_DONE__Self-training complete → {final_model}")
             except Exception as exc:
                 self.log_queue.put(f"__D2_ERROR__{exc}")
 
