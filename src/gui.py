@@ -1508,6 +1508,30 @@ class SegmentationGUI(tk.Tk):
         PAD = {"padx": 8, "pady": 4}
 
         # ----------------------------------------------------------------
+        # Section 0: Dependency status
+        # ----------------------------------------------------------------
+        dep_frame = ttk.LabelFrame(scroll_frame, text="Dependencies", padding=8)
+        dep_frame.pack(fill=tk.X, padx=10, pady=6)
+
+        self._d2_dep_labels: dict[str, tk.Label] = {}
+        deps = ["torch", "torchvision", "detectron2", "cv2", "pycocotools", "tifffile"]
+        dep_row = ttk.Frame(dep_frame)
+        dep_row.pack(fill=tk.X)
+        for i, dep in enumerate(deps):
+            ttk.Label(dep_row, text=f"{dep}:").grid(row=0, column=i * 2, padx=(8, 2), sticky=tk.E)
+            lbl = tk.Label(dep_row, text="…", width=4, font=("Courier", 10, "bold"))
+            lbl.grid(row=0, column=i * 2 + 1, padx=(0, 8))
+            self._d2_dep_labels[dep] = lbl
+
+        btn_row = ttk.Frame(dep_frame)
+        btn_row.pack(fill=tk.X, pady=(4, 0))
+        ttk.Button(btn_row, text="Check Dependencies", command=self._d2_check_deps).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btn_row, text="Show Install Guide", command=self._d2_show_install_guide).pack(side=tk.LEFT, padx=4)
+
+        # Run check automatically after window is ready
+        self.after(500, self._d2_check_deps)
+
+        # ----------------------------------------------------------------
         # Section 1: Paths
         # ----------------------------------------------------------------
         path_frame = ttk.LabelFrame(scroll_frame, text="Paths", padding=10)
@@ -1685,6 +1709,164 @@ class SegmentationGUI(tk.Tk):
     # ------------------------------------------------------------------
     # Detectron2 tab helpers
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Dependency checking
+    # ------------------------------------------------------------------
+    def _d2_check_deps(self) -> dict[str, bool]:
+        """Import-check each required package and update status labels.
+
+        Returns:
+            Dict mapping package name to availability bool.
+        """
+        import importlib
+
+        _IMPORT_NAMES = {
+            "torch": "torch",
+            "torchvision": "torchvision",
+            "detectron2": "detectron2",
+            "cv2": "cv2",
+            "pycocotools": "pycocotools",
+            "tifffile": "tifffile",
+        }
+
+        status: dict[str, bool] = {}
+        for dep, module in _IMPORT_NAMES.items():
+            try:
+                importlib.import_module(module)
+                ok = True
+            except ImportError:
+                ok = False
+            status[dep] = ok
+            lbl = self._d2_dep_labels.get(dep)
+            if lbl:
+                lbl.config(text="✓" if ok else "✗",
+                           fg="green" if ok else "red")
+
+        all_ok = all(status.values())
+        missing = [k for k, v in status.items() if not v]
+        if missing:
+            self._d2_log_msg(
+                f"[DEPS] Missing packages: {', '.join(missing)}\n"
+                "       Click 'Show Install Guide' for installation instructions."
+            )
+        else:
+            self._d2_log_msg("[DEPS] All dependencies found ✓")
+        return status
+
+    def _d2_show_install_guide(self) -> None:
+        """Open a popup window with step-by-step installation instructions."""
+        win = tk.Toplevel(self)
+        win.title("Detectron2 Installation Guide")
+        win.geometry("720x560")
+        win.resizable(True, True)
+
+        text = scrolledtext.ScrolledText(win, wrap=tk.WORD, font=("Courier", 10))
+        text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        guide = """\
+DETECTRON2 INSTALLATION GUIDE
+==============================
+
+Detectron2 must be built from source — it is NOT available on PyPI.
+Follow the steps below for your environment.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 1 — Install PyTorch with CUDA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Visit https://pytorch.org/get-started/locally/ and select your OS / CUDA version.
+
+Example for CUDA 11.8:
+  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+
+Example for CUDA 12.1:
+  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+Verify:
+  python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 2 — Install detectron2 dependencies
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  pip install opencv-python pycocotools tifffile pyyaml scipy tqdm matplotlib
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 3 — Install detectron2 from source
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Option A — Build from GitHub (recommended, always up-to-date):
+  pip install 'git+https://github.com/facebookresearch/detectron2.git'
+
+Option B — Pre-built wheels (faster, matches specific torch+CUDA):
+  # Replace cu118 and torch2.1.0 with your actual versions
+  pip install detectron2 -f \\
+    https://dl.fbaipublicfiles.com/detectron2/wheels/cu118/torch2.1.0/index.html
+
+  Wheel index: https://dl.fbaipublicfiles.com/detectron2/wheels/
+  Available: cu117, cu118, cu121 × torch 1.x / 2.x
+
+Option C — Conda (if using conda environment):
+  conda install -c conda-forge detectron2
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 4 — Install cellseg_trainer package
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+From the project root directory:
+  pip install -e .
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 5 — Verify everything works
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  python -c "import detectron2; print('detectron2', detectron2.__version__)"
+  python -c "from detectron2.config import get_cfg; print('config OK')"
+  python -c "from detectron2.engine import DefaultTrainer; print('trainer OK')"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+COMMON ERRORS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ModuleNotFoundError: No module named 'detectron2'
+  → Follow Step 3 above.
+
+CUDA error / device mismatch
+  → Make sure torch and detectron2 were built against the same CUDA version.
+  → Run: python -c "import torch; print(torch.version.cuda)"
+
+ImportError: libGL.so.1: cannot open shared object file
+  → On headless Linux: sudo apt install libgl1-mesa-glx libglib2.0-0
+
+error: command 'gcc' failed — build error from source
+  → Install build tools: sudo apt install build-essential python3-dev
+  → Make sure gcc and g++ are available: gcc --version
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FOR YOUR 2-GPU (2 × 24 GB) SETUP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Recommended install command for 2x NVIDIA 24 GB GPUs (check your CUDA version first):
+
+  nvidia-smi   ← note the 'CUDA Version' in the top-right corner
+
+Then install the matching PyTorch + detectron2 combination.
+
+After installation, click 'Check Dependencies' to verify all packages are found.
+"""
+        text.insert(tk.END, guide)
+        text.config(state=tk.DISABLED)
+
+        ttk.Button(win, text="Close", command=win.destroy).pack(pady=6)
+
+    def _d2_assert_deps_or_warn(self) -> bool:
+        """Return True if all required deps are present; show error dialog if not."""
+        status = self._d2_check_deps()
+        missing = [k for k, v in status.items() if not v]
+        if missing:
+            messagebox.showerror(
+                "Missing Dependencies",
+                f"The following packages are not installed:\n\n"
+                f"  {', '.join(missing)}\n\n"
+                f"Click 'Show Install Guide' in the Detectron2 tab for\n"
+                f"step-by-step installation instructions.",
+            )
+            return False
+        return True
+
     def _d2_browse(self, var: tk.StringVar, kind: str) -> None:
         if kind == "file":
             path = filedialog.askopenfilename()
@@ -1712,6 +1894,9 @@ class SegmentationGUI(tk.Tk):
 
         if not image_dir or not mask_dir or not output_dir:
             messagebox.showerror("Missing paths", "Please set Image, Mask, and Dataset directories.")
+            return
+
+        if not self._d2_assert_deps_or_warn():
             return
 
         self.d2_progress.start()
@@ -1763,6 +1948,9 @@ class SegmentationGUI(tk.Tk):
 
         if not d2_config or not dataset or not output:
             messagebox.showerror("Missing paths", "Detectron2 Config, Dataset Dir and Output Dir are required.")
+            return
+
+        if not self._d2_assert_deps_or_warn():
             return
 
         self.d2_progress.start()
@@ -1817,6 +2005,9 @@ class SegmentationGUI(tk.Tk):
             messagebox.showerror("Missing paths", "Detectron2 Config, Weights, Image Dir, and Output Dir are required.")
             return
 
+        if not self._d2_assert_deps_or_warn():
+            return
+
         self.d2_progress.start()
         self.d2_status.set("Running inference …")
 
@@ -1861,6 +2052,9 @@ class SegmentationGUI(tk.Tk):
                 "Missing paths",
                 "Detectron2 Config, Weights, Dataset Dir, Unlabelled Dir, and Output Dir are all required."
             )
+            return
+
+        if not self._d2_assert_deps_or_warn():
             return
 
         self.d2_progress.start()
