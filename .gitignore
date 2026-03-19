@@ -1,0 +1,43 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Training outputs (large files)
+output*/
+output_detectron2*/
+predictions*/
+
+# Dataset patches (generated, can be large)
+dataset/patches/
+
+# Model checkpoints (track only final weights intentionally)
+*.pth
+*.pkl
+!models/*.pth
+
+# Logs
+*.log
+pipeline.log
