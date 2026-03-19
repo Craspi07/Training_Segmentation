@@ -12,6 +12,7 @@ Provides tabs for:
 import logging
 import os
 import queue
+import subprocess
 import sys
 import threading
 import tkinter as tk
@@ -24,6 +25,9 @@ import yaml
 SRC_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SRC_DIR.parent
 sys.path.insert(0, str(SRC_DIR))
+
+# Default path to the project inside the Docker container
+_CONTAINER_DEFAULT_ROOT = "/workspace/Training_Segmentation"
 
 from rename_files import (
     list_image_files,
@@ -63,10 +67,35 @@ class SegmentationGUI(tk.Tk):
         self.yaml_config: dict = {}
         self.yaml_config_path: str = ""
 
+        # Docker settings for running ML on Windows
+        self.docker_container = tk.StringVar(value=os.environ.get("DOCKER_CONTAINER", ""))
+        self.container_root = tk.StringVar(value=os.environ.get("CONTAINER_PROJECT_ROOT", _CONTAINER_DEFAULT_ROOT))
+
         self._build_menu()
         self._build_tabs()
         self._setup_logging()
         self._poll_log_queue()
+
+    # ----- Docker helpers -----
+    def _to_container_path(self, path: str) -> str:
+        """Translate a local filesystem path to the equivalent container path."""
+        try:
+            rel = Path(path).relative_to(PROJECT_ROOT)
+            return (Path(self.container_root.get()) / rel).as_posix()
+        except ValueError:
+            return str(path).replace("\\", "/")
+
+    def _run_docker_cmd(self, container: str, cmd: list) -> int:
+        """Run a command inside the Docker container, streaming output to logger."""
+        full_cmd = ["docker", "exec", container] + cmd
+        logger.info(f"docker exec: {' '.join(full_cmd)}")
+        proc = subprocess.Popen(
+            full_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        )
+        for line in proc.stdout:
+            logger.info(line.rstrip())
+        proc.wait()
+        return proc.returncode
 
     # ----- Menu bar -----
     def _build_menu(self):
@@ -1192,6 +1221,15 @@ class SegmentationGUI(tk.Tk):
     def _build_train_tab(self):
         tab = self.tab_train
 
+        # Docker settings (used when running GUI on Windows)
+        docker_frame = ttk.LabelFrame(tab, text="Docker (Windows only — leave blank if running inside container)", padding=6)
+        docker_frame.pack(fill=tk.X, padx=10, pady=(10, 0))
+
+        ttk.Label(docker_frame, text="Container name/ID:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
+        ttk.Entry(docker_frame, textvariable=self.docker_container, width=30).grid(row=0, column=1, sticky=tk.W)
+        ttk.Label(docker_frame, text="  Project root in container:").grid(row=0, column=2, sticky=tk.W, padx=(10, 5))
+        ttk.Entry(docker_frame, textvariable=self.container_root, width=35).grid(row=0, column=3, sticky=tk.W)
+
         # Controls
         ctrl_frame = ttk.Frame(tab)
         ctrl_frame.pack(fill=tk.X, padx=10, pady=10)
@@ -1263,8 +1301,6 @@ class SegmentationGUI(tk.Tk):
 
     def _training_worker(self, task: str):
         try:
-            from train_cellpose import load_config, train_cellpose_model
-
             configs_to_run = []
             if task == "dic":
                 configs_to_run.append(str(PROJECT_ROOT / "configs" / "dic_wholecell.yaml"))
@@ -1274,17 +1310,29 @@ class SegmentationGUI(tk.Tk):
                 configs_to_run.append(str(PROJECT_ROOT / "configs" / "dic_wholecell.yaml"))
                 configs_to_run.append(str(PROJECT_ROOT / "configs" / "fluor_nucleus.yaml"))
             elif task == "custom":
-                # Use config from GUI editor
                 self._read_params_into_config()
                 configs_to_run.append(self.yaml_config_path)
+
+            container = self.docker_container.get().strip()
 
             for cfg_path in configs_to_run:
                 if self._stop_event.is_set():
                     logger.info("Training stopped by user.")
                     break
                 logger.info(f"Loading config: {cfg_path}")
-                cfg = load_config(cfg_path)
-                train_cellpose_model(cfg)
+
+                if container:
+                    # Running GUI on Windows — delegate to Docker container
+                    container_cfg = self._to_container_path(cfg_path)
+                    container_script = self.container_root.get().rstrip("/") + "/src/train_cellpose.py"
+                    rc = self._run_docker_cmd(container, ["python", container_script, "--config", container_cfg])
+                    if rc != 0:
+                        raise RuntimeError(f"docker exec exited with code {rc}")
+                else:
+                    # Running inside container — import directly
+                    from train_cellpose import load_config, train_cellpose_model
+                    cfg = load_config(cfg_path)
+                    train_cellpose_model(cfg)
 
             self.log_queue.put("__TRAINING_DONE__")
         except Exception as e:
@@ -1417,13 +1465,26 @@ class SegmentationGUI(tk.Tk):
 
         def worker():
             try:
-                from evaluate import run_inference
-                masks, names = run_inference(
-                    model_path=model,
-                    image_dir=img_dir,
-                    output_dir=output,
-                )
-                self.log_queue.put(f"__EVAL_DONE__Inference complete: {len(masks)} images processed")
+                container = self.docker_container.get().strip()
+                if container:
+                    container_script = self.container_root.get().rstrip("/") + "/src/evaluate.py"
+                    rc = self._run_docker_cmd(container, [
+                        "python", container_script,
+                        "--model", self._to_container_path(model),
+                        "--image-dir", self._to_container_path(img_dir),
+                        "--output-dir", self._to_container_path(output),
+                    ])
+                    if rc != 0:
+                        raise RuntimeError(f"docker exec exited with code {rc}")
+                    self.log_queue.put("__EVAL_DONE__Inference complete")
+                else:
+                    from evaluate import run_inference
+                    masks, names = run_inference(
+                        model_path=model,
+                        image_dir=img_dir,
+                        output_dir=output,
+                    )
+                    self.log_queue.put(f"__EVAL_DONE__Inference complete: {len(masks)} images processed")
             except Exception as e:
                 logger.exception("Inference failed")
                 self.log_queue.put(f"__EVAL_ERROR__{e}")
@@ -1448,14 +1509,28 @@ class SegmentationGUI(tk.Tk):
 
         def worker():
             try:
-                from evaluate import evaluate_model
-                self._read_params_into_config()
-                results = evaluate_model(self.yaml_config, model)
-                msg = "Full Evaluation Results:\n\n"
-                for k, v in results.items():
-                    if not isinstance(v, (list, dict)):
-                        msg += f"  {k}: {v}\n"
-                self.log_queue.put(f"__EVAL_DONE__{msg}")
+                container = self.docker_container.get().strip()
+                if container:
+                    if not self.yaml_config_path:
+                        raise RuntimeError("Save the config file first (File → Save Config) before running full evaluation via Docker.")
+                    container_script = self.container_root.get().rstrip("/") + "/src/evaluate.py"
+                    rc = self._run_docker_cmd(container, [
+                        "python", container_script,
+                        "--config", self._to_container_path(self.yaml_config_path),
+                        "--model", self._to_container_path(model),
+                    ])
+                    if rc != 0:
+                        raise RuntimeError(f"docker exec exited with code {rc}")
+                    self.log_queue.put("__EVAL_DONE__Full evaluation complete (see log for metrics)")
+                else:
+                    from evaluate import evaluate_model
+                    self._read_params_into_config()
+                    results = evaluate_model(self.yaml_config, model)
+                    msg = "Full Evaluation Results:\n\n"
+                    for k, v in results.items():
+                        if not isinstance(v, (list, dict)):
+                            msg += f"  {k}: {v}\n"
+                    self.log_queue.put(f"__EVAL_DONE__{msg}")
             except Exception as e:
                 logger.exception("Evaluation failed")
                 self.log_queue.put(f"__EVAL_ERROR__{e}")
