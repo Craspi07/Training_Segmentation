@@ -14,7 +14,9 @@ DATASET:
 MODEL:
   # Path to an existing Detectron2 YAML from a published paper
   DETECTRON2_CONFIG: "configs_detectron2/mask_rcnn_R_50_FPN.yaml"
-  # Leave empty to use Detectron2 defaults, or point to a .pth checkpoint
+  # Leave empty to use Detectron2 defaults, or point to your weights file.
+  # Supported formats: .pt (raw PyTorch state_dict), .pth (Detectron2), .pkl (Caffe2)
+  # .pt files are automatically converted to Detectron2 format at runtime.
   WEIGHTS: ""
   NUM_CLASSES: 1
   FREEZE_BACKBONE: false

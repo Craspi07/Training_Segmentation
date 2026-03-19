@@ -67,13 +67,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p_train.add_argument("--patch-size", type=int, default=512, help="Input patch size (default: 512)")
     p_train.add_argument("--freeze-backbone", action="store_true", default=False, help="Freeze backbone layers")
     p_train.add_argument("--fast-finetune", action="store_true", default=False, help="Fast fine-tuning mode")
-    p_train.add_argument("--weights", default=None, metavar="PATH", help="Pre-trained weights to fine-tune from")
+    p_train.add_argument("--weights", default=None, metavar="PATH", help="Pre-trained weights to fine-tune from (.pt, .pth, or .pkl)")
     p_train.add_argument("--resume", action="store_true", default=False, help="Resume from last checkpoint")
     p_train.add_argument("--num-classes", type=int, default=1, help="Number of object classes (default: 1)")
 
     # ---- predict ----
     p_pred = sub.add_parser("predict", help="Run inference on images")
-    p_pred.add_argument("--model", required=True, metavar="PATH", help="Trained model weights")
+    p_pred.add_argument("--model", required=True, metavar="PATH", help="Trained model weights (.pt, .pth, or .pkl)")
     p_pred.add_argument("--d2-config", required=True, metavar="YAML", help="Detectron2 YAML config path")
     p_pred.add_argument("--images", required=True, metavar="DIR", help="Input image directory")
     p_pred.add_argument("--output", required=True, metavar="DIR", help="Output directory")
@@ -87,7 +87,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # ---- self-train ----
     p_st = sub.add_parser("self-train", help="Self-training / active learning loop")
     p_st.add_argument("--dataset", required=True, metavar="DIR", help="Labelled COCO dataset directory")
-    p_st.add_argument("--model", required=True, metavar="PATH", help="Initial model weights")
+    p_st.add_argument("--model", required=True, metavar="PATH", help="Initial model weights (.pt, .pth, or .pkl)")
     p_st.add_argument("--d2-config", required=True, metavar="YAML", help="Detectron2 YAML config")
     p_st.add_argument("--unlabelled", required=True, metavar="DIR", help="Unlabelled image directory")
     p_st.add_argument("--output", required=True, metavar="DIR", help="Output directory")

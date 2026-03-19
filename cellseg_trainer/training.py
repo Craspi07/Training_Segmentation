@@ -61,7 +61,7 @@ class CellSegTrainer:
             resume: Resume from last checkpoint if available.
 
         Returns:
-            Path to the final model weights ``model_final.pth``.
+            Path to the final model weights (``model_final.pth``).
         """
         from detectron2.engine import launch  # type: ignore
 
@@ -92,11 +92,12 @@ class CellSegTrainer:
                 resume,
             )
 
+        # Detectron2 saves checkpoints as .pth
         final_model = output_dir / "model_final.pth"
         if final_model.exists():
             logger.info("Training complete → %s", final_model)
         else:
-            logger.warning("model_final.pth not found in %s", output_dir)
+            logger.warning("model_final.pth not found in %s — check output dir", output_dir)
         return final_model
 
 
@@ -149,9 +150,11 @@ def _train_worker(
     cfg.TEST.EVAL_PERIOD = train_cfg.get("EVAL_PERIOD", 500)
     cfg.SOLVER.CHECKPOINT_PERIOD = train_cfg.get("CHECKPOINT_PERIOD", 500)
 
-    # Weights override (fine-tuning)
+    # Weights override (fine-tuning) — supports .pt, .pth, .pkl
     weights = model_cfg.get("WEIGHTS", "")
     if weights and Path(weights).exists():
+        from cellseg_trainer.utils import prepare_weights_for_detectron2
+        weights = prepare_weights_for_detectron2(weights, cache_dir=output_dir)
         cfg.MODEL.WEIGHTS = weights
         logger.info("Fine-tuning from weights: %s", weights)
 
@@ -210,7 +213,7 @@ def train(
         resume: Resume training.
 
     Returns:
-        Path to ``model_final.pth``.
+        Path to ``model_final.pth`` (Detectron2 output format).
     """
     trainer = CellSegTrainer(cellseg_config, d2_config_path)
     return trainer.train(

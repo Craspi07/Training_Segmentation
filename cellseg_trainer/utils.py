@@ -183,6 +183,97 @@ def available_gpus() -> list[int]:
         return []
 
 
+def prepare_weights_for_detectron2(weights_path: str | Path, cache_dir: str | Path | None = None) -> str:
+    """Ensure a weights file is in Detectron2-compatible format.
+
+    Detectron2 expects a checkpoint dict with a ``"model"`` key::
+
+        {"model": {<layer>: <tensor>, ...}}
+
+    Plain ``.pt`` files saved with ``torch.save(model.state_dict(), ...)``
+    lack this wrapper.  This function detects the format and writes a
+    converted ``.pth`` file when necessary.
+
+    Supported input formats:
+      - ``.pt``  — raw ``state_dict`` or full ``nn.Module``
+      - ``.pth`` — Detectron2 checkpoint (``{"model": ...}``) or raw state_dict
+      - ``.pkl`` — Detectron2 / Caffe2 pickle checkpoint
+
+    Args:
+        weights_path: Path to the source weights file (``.pt``, ``.pth``, ``.pkl``).
+        cache_dir: Directory to write the converted file.  Defaults to the
+            same directory as *weights_path*.
+
+    Returns:
+        Path string to a Detectron2-compatible weights file (may be the
+        original path if no conversion was needed).
+
+    Raises:
+        FileNotFoundError: If *weights_path* does not exist.
+        RuntimeError: If the file cannot be parsed as a PyTorch checkpoint.
+    """
+    weights_path = Path(weights_path)
+    if not weights_path.exists():
+        raise FileNotFoundError(f"Weights file not found: {weights_path}")
+
+    import torch
+
+    suffix = weights_path.suffix.lower()
+
+    # .pkl files are loaded natively by Detectron2 — no conversion needed
+    if suffix == ".pkl":
+        logger.info("Weights are .pkl (Detectron2/Caffe2 format) — no conversion needed")
+        return str(weights_path)
+
+    # Load the checkpoint
+    try:
+        ckpt = torch.load(str(weights_path), map_location="cpu")
+    except Exception as exc:
+        raise RuntimeError(f"Cannot load weights from {weights_path}: {exc}") from exc
+
+    # Detect format
+    if isinstance(ckpt, dict):
+        if "model" in ckpt:
+            # Already Detectron2-compatible (has "model" key)
+            logger.info("Weights already in Detectron2 format — no conversion needed")
+            return str(weights_path)
+        # Raw state_dict dict (keys are layer names)
+        state_dict = ckpt
+    else:
+        # Full nn.Module object saved with torch.save(model, ...)
+        try:
+            state_dict = ckpt.state_dict()
+        except AttributeError as exc:
+            raise RuntimeError(
+                f"Cannot extract state_dict from {weights_path}. "
+                "Expected a state_dict dict or nn.Module."
+            ) from exc
+
+    # Strip common prefixes added by DataParallel / DistributedDataParallel
+    cleaned: dict = {}
+    for k, v in state_dict.items():
+        new_k = k
+        for prefix in ("module.", "model."):
+            if new_k.startswith(prefix):
+                new_k = new_k[len(prefix):]
+        cleaned[new_k] = v
+
+    # Wrap in Detectron2 format
+    d2_ckpt = {"model": cleaned}
+
+    out_dir = Path(cache_dir) if cache_dir else weights_path.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / (weights_path.stem + "_d2converted.pth")
+    torch.save(d2_ckpt, str(out_path))
+    logger.info(
+        "Converted %s → Detectron2 format → %s (%d layers)",
+        weights_path.name,
+        out_path.name,
+        len(cleaned),
+    )
+    return str(out_path)
+
+
 def gpu_memory_gb(device: int = 0) -> float:
     """Return total GPU memory in GB for a given device.
 
