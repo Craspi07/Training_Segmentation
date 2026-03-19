@@ -42,7 +42,7 @@ def main() -> None:
     parser.add_argument("--patch-size",     type=int, default=512)
     parser.add_argument("--freeze-backbone",action="store_true", default=False)
     parser.add_argument("--fast-finetune",  action="store_true", default=False)
-    parser.add_argument("--weights",        default=None, help="Pre-trained weights for fine-tuning")
+    parser.add_argument("--weights",        default=None, help="Pre-trained weights for fine-tuning (.pt, .pth, or .pkl)")
     parser.add_argument("--resume",         action="store_true", default=False)
     parser.add_argument("--num-classes",    type=int, default=1)
     parser.add_argument("--log-level",      default="INFO")

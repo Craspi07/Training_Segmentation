@@ -29,7 +29,8 @@ class CellSegPredictor:
     """Detectron2 predictor wrapper for cell segmentation.
 
     Args:
-        model_path: Path to ``model_final.pth`` or a checkpoint.
+        model_path: Path to model weights (``.pt``, ``.pth``, or ``.pkl``).
+            ``.pt`` files (raw PyTorch state_dict) are automatically converted.
         d2_config_path: Path to the Detectron2 YAML config used during training.
         score_thresh: Instance confidence threshold.
         device: Torch device string (``"cuda:0"`` etc.).
@@ -56,9 +57,13 @@ class CellSegPredictor:
         except ImportError as exc:
             raise ImportError("detectron2 is required") from exc
 
+        from cellseg_trainer.utils import prepare_weights_for_detectron2
+
         cfg = get_cfg()
         cfg.merge_from_file(str(self.d2_config_path))
-        cfg.MODEL.WEIGHTS = str(self.model_path)
+        # Convert .pt / raw state_dict to Detectron2 format if needed
+        weights = prepare_weights_for_detectron2(self.model_path)
+        cfg.MODEL.WEIGHTS = weights
         cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = self.score_thresh
         cfg.MODEL.DEVICE = self.device
         cfg.freeze()
@@ -113,7 +118,7 @@ def run_inference(
     """Run inference on all images in a directory.
 
     Args:
-        model_path: Trained model weights.
+        model_path: Trained model weights (``.pt``, ``.pth``, or ``.pkl``).
         d2_config_path: Detectron2 YAML config path.
         image_dir: Directory of input images.
         output_dir: Where to save results.

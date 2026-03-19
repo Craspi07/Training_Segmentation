@@ -1528,7 +1528,7 @@ class SegmentationGUI(tk.Tk):
             ("Mask Directory:",           self.d2_mask_dir,      "dir"),
             ("Dataset Output Dir:",       self.d2_dataset_dir,   "dir"),
             ("Detectron2 Config (YAML):", self.d2_config_path,   "file"),
-            ("Weights (.pth):",           self.d2_weights_path,  "file"),
+            ("Weights (.pt/.pth/.pkl):",   self.d2_weights_path,  "file"),
             ("Training Output Dir:",      self.d2_output_dir,    "dir"),
             ("Inference Image Dir:",      self.d2_infer_img_dir, "dir"),
             ("Inference Output Dir:",     self.d2_infer_out_dir, "dir"),

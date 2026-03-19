@@ -5,7 +5,7 @@ Run a trained Detectron2 model on a directory of microscopy images.
 
 Usage:
     python scripts/run_inference.py \
-        --model   output/model_final.pth \
+        --model   output/model_final.pth \   # also accepts .pt files
         --d2-config configs_detectron2/mask_rcnn_R_50_FPN.yaml \
         --images  new_images/ \
         --output  predictions/
@@ -24,7 +24,7 @@ from cellseg_trainer.utils import setup_logging
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--model",         required=True, help="Trained model weights (.pth)")
+    parser.add_argument("--model",         required=True, help="Trained model weights (.pt, .pth, or .pkl)")
     parser.add_argument("--d2-config",     required=True, help="Detectron2 YAML config")
     parser.add_argument("--images",        required=True, help="Input image directory")
     parser.add_argument("--output",        required=True, help="Output directory")
