@@ -13,6 +13,8 @@ from typing import Callable, Iterable, TypeVar
 
 import numpy as np
 
+logger = logging.getLogger(__name__)
+
 T = TypeVar("T")
 
 # ---------------------------------------------------------------------------
