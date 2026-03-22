@@ -13,7 +13,6 @@ keywords = ["cell segmentation", "microscopy", "detectron2", "instance segmentat
 
 dependencies = [
     "numpy>=1.24",
-    "opencv-python>=4.7",
     "tifffile>=2023.7",
     "pycocotools>=2.0",
     "torch>=2.0",
@@ -27,6 +26,13 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-cov"]
 ome = ["aicsimageio>=4.0"]
+# opencv-python conflicts with conda's opencv package; install via conda instead:
+#   conda install -c conda-forge opencv
+# or pip install cellseg_trainer[cv2] for pip-only environments
+cv2 = ["opencv-python-headless>=4.7"]
+# detectron2 requires special installation — see https://detectron2.readthedocs.io/
+# pip install cellseg_trainer[detectron2] is NOT supported; install detectron2 separately
+detectron2 = []
 
 [project.scripts]
 cellseg_trainer = "cellseg_trainer.cli:main"
