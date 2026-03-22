@@ -1823,16 +1823,25 @@ class SegmentationGUI(tk.Tk):
         container = self.docker_container.get().strip()
         python = self.d2_docker_python.get().strip() if container else None
 
+        first_error: str | None = None  # capture first docker error for diagnosis
+
         for dep in deps:
             if container and python:
                 try:
                     result = subprocess.run(
                         ["docker", "exec", container, python, "-c", f"import {dep}"],
-                        capture_output=True, timeout=15,
+                        capture_output=True, timeout=15, text=True,
                     )
                     ok = result.returncode == 0
-                except Exception:
+                    if not ok and first_error is None:
+                        err = (result.stderr or result.stdout or "").strip()
+                        first_error = err if err else f"exit code {result.returncode}"
+                except FileNotFoundError:
                     ok = False
+                    first_error = first_error or "'docker' command not found — is Docker Desktop running and in PATH?"
+                except Exception as exc:
+                    ok = False
+                    first_error = first_error or str(exc)
             else:
                 import importlib
                 try:
@@ -1849,10 +1858,10 @@ class SegmentationGUI(tk.Tk):
         missing = [k for k, v in status.items() if not v]
         src = f"Docker ({container})" if container else "local environment"
         if missing:
-            self._d2_log_msg(
-                f"[DEPS] Missing in {src}: {', '.join(missing)}\n"
-                "       Click 'Show Install Guide' for installation instructions."
-            )
+            self._d2_log_msg(f"[DEPS] Failed in {src}: {', '.join(missing)}")
+            if first_error:
+                self._d2_log_msg(f"[DEPS] Error detail: {first_error}")
+                self._d2_log_msg("[DEPS] → Check container name (docker ps) and venv Python path.")
         else:
             self._d2_log_msg(f"[DEPS] All dependencies found in {src} ✓")
         return status
