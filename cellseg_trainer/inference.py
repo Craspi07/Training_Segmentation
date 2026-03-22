@@ -84,15 +84,11 @@ class CellSegPredictor:
 
         import torch
 
-        # Convert grayscale to BGR for Detectron2
+        # Convert grayscale to BGR for Detectron2 (pure numpy — no cv2 needed)
         if image.ndim == 2:
-            import cv2  # type: ignore
-
-            image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
-        elif image.shape[2] == 1:
-            import cv2  # type: ignore
-
-            image = cv2.cvtColor(image[:, :, 0], cv2.COLOR_GRAY2BGR)
+            image = np.stack([image, image, image], axis=-1)
+        elif image.ndim == 3 and image.shape[2] == 1:
+            image = np.concatenate([image, image, image], axis=-1)
 
         with torch.no_grad():
             return self._predictor(image)

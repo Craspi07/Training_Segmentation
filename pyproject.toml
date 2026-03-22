@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+requires = ["setuptools>=43", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "cellseg_trainer"
@@ -13,7 +13,6 @@ keywords = ["cell segmentation", "microscopy", "detectron2", "instance segmentat
 
 dependencies = [
     "numpy>=1.24",
-    "opencv-python>=4.7",
     "tifffile>=2023.7",
     "pycocotools>=2.0",
     "torch>=2.0",
@@ -26,7 +25,23 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-cov"]
+
+# opencv-python conflicts with conda's opencv package.
+# In conda environments: conda install -c conda-forge opencv
+# In pip-only environments: pip install "cellseg_trainer[cv2]"
+# The package runs without cv2 (scipy fallback is used automatically).
+cv2 = ["opencv-python-headless>=4.7"]
+
+# detectron2 cannot be installed via PyPI — it must be built from source.
+# See: https://detectron2.readthedocs.io/en/latest/tutorials/install.html
+# The training and inference modules import detectron2 lazily and give a
+# clear error message if it is missing.
+# detectron2 = []   # intentionally empty — listed for documentation only
+
+# Extra loaders used by the legacy src/ scripts (not required by the package)
+nd2 = ["nd2>=0.5"]
 ome = ["aicsimageio>=4.0"]
+scikit = ["scikit-image>=0.20"]
 
 [project.scripts]
 cellseg_trainer = "cellseg_trainer.cli:main"

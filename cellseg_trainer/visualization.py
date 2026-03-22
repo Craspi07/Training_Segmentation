@@ -66,6 +66,9 @@ def draw_bboxes(
 ) -> np.ndarray:
     """Draw bounding boxes (and optional scores) on an RGB image.
 
+    Uses cv2 when available for text labels; falls back to pure numpy
+    rectangle drawing so the function always works.
+
     Args:
         image_rgb: uint8 RGB array (H, W, 3).
         bboxes: List of ``(x, y, w, h)`` bounding boxes.
@@ -76,17 +79,34 @@ def draw_bboxes(
     Returns:
         Annotated uint8 RGB array.
     """
+    out = image_rgb.copy()
+    t = max(1, int(thickness))
+
     try:
         import cv2  # type: ignore
-    except ImportError as exc:
-        raise ImportError("opencv-python is required") from exc
 
-    out = image_rgb.copy()
-    for i, (x, y, w, h) in enumerate(bboxes):
-        cv2.rectangle(out, (x, y), (x + w, y + h), color, thickness)
-        if scores is not None:
-            label = f"{scores[i]:.2f}"
-            cv2.putText(out, label, (x, max(y - 5, 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+        for i, (x, y, w, h) in enumerate(bboxes):
+            cv2.rectangle(out, (int(x), int(y)), (int(x + w), int(y + h)), color, t)
+            if scores is not None:
+                label = f"{scores[i]:.2f}"
+                cv2.putText(out, label, (int(x), max(int(y) - 5, 10)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+
+    except ImportError:
+        # Fallback: draw rectangle edges with numpy slice assignment
+        H, W = out.shape[:2]
+        for x, y, w, h in bboxes:
+            x0, y0, x1, y1 = int(x), int(y), int(x + w), int(y + h)
+            # Clamp to image bounds
+            x0c, y0c = max(x0, 0), max(y0, 0)
+            x1c, y1c = min(x1, W), min(y1, H)
+            # Top / bottom edges
+            out[y0c:min(y0c + t, H), x0c:x1c] = color
+            out[max(y1c - t, 0):y1c, x0c:x1c] = color
+            # Left / right edges
+            out[y0c:y1c, x0c:min(x0c + t, W)] = color
+            out[y0c:y1c, max(x1c - t, 0):x1c] = color
+
     return out
 
 
