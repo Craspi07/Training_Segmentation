@@ -72,6 +72,10 @@ class SegmentationGUI(tk.Tk):
         self.container_root = tk.StringVar(value=os.environ.get("CONTAINER_PROJECT_ROOT", _CONTAINER_DEFAULT_ROOT))
         # Python interpreter inside the Detectron2 venv in Docker
         self.d2_docker_python = tk.StringVar(value=os.environ.get("D2_DOCKER_PYTHON", "/delectron_enve/bin/python"))
+        # Bind-mount mapping: Windows host folder → container folder
+        # e.g. host = C:\Users\Windows\Documents\Segmentation  container = /workspace
+        self.host_mount_path = tk.StringVar(value=os.environ.get("HOST_MOUNT_PATH", ""))
+        self.container_mount_path = tk.StringVar(value=os.environ.get("CONTAINER_MOUNT_PATH", "/workspace"))
 
         self._build_menu()
         self._build_tabs()
@@ -80,7 +84,21 @@ class SegmentationGUI(tk.Tk):
 
     # ----- Docker helpers -----
     def _to_container_path(self, path: str) -> str:
-        """Translate a local filesystem path to the equivalent container path."""
+        """Translate a local filesystem path to the equivalent container path.
+
+        Translation order:
+        1. If path is under the bind-mount host folder, map it to the container mount folder.
+        2. If path is under PROJECT_ROOT, map it to container_root.
+        3. Fall back to replacing backslashes (may still fail if not mounted).
+        """
+        host_mount = self.host_mount_path.get().strip()
+        container_mount = self.container_mount_path.get().strip()
+        if host_mount and container_mount:
+            try:
+                rel = Path(path).relative_to(Path(host_mount))
+                return (Path(container_mount) / rel).as_posix()
+            except ValueError:
+                pass
         try:
             rel = Path(path).relative_to(PROJECT_ROOT)
             return (Path(self.container_root.get()) / rel).as_posix()
@@ -1597,11 +1615,20 @@ class SegmentationGUI(tk.Tk):
         ttk.Label(docker_frame, text="  Container project root:").grid(row=0, column=4, sticky=tk.W, padx=(12, 4))
         ttk.Entry(docker_frame, textvariable=self.container_root, width=30).grid(row=0, column=5, sticky=tk.W)
 
+        ttk.Label(docker_frame, text="Host data folder (Windows):").grid(row=1, column=0, sticky=tk.W, padx=(0, 4), pady=(6, 0))
+        ttk.Entry(docker_frame, textvariable=self.host_mount_path, width=40).grid(row=1, column=1, columnspan=2, sticky=tk.W, pady=(6, 0))
+        ttk.Label(docker_frame, text="  → Container folder:").grid(row=1, column=3, sticky=tk.W, padx=(12, 4), pady=(6, 0))
+        ttk.Entry(docker_frame, textvariable=self.container_mount_path, width=20).grid(row=1, column=4, sticky=tk.W, pady=(6, 0))
+
         ttk.Label(
             docker_frame,
-            text="Tip: get your container name with  docker ps  in a terminal on Windows.",
+            text="Bind mount: set Host data folder to the Windows path you mounted (e.g. C:\\Users\\Windows\\Documents\\Segmentation)  "
+                 "and Container folder to where it appears in Docker (e.g. /workspace).  "
+                 "Get container name with  docker ps.",
             foreground="gray",
-        ).grid(row=1, column=0, columnspan=6, sticky=tk.W, pady=(4, 0))
+            wraplength=900,
+            justify=tk.LEFT,
+        ).grid(row=2, column=0, columnspan=6, sticky=tk.W, pady=(4, 0))
 
         # ----------------------------------------------------------------
         # Section 0b: Dependency status
