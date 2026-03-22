@@ -12,5 +12,6 @@ torchvision>=0.15
 tqdm>=4.65
 # detectron2 — install from source:
 # pip install 'git+https://github.com/facebookresearch/detectron2.git'
-opencv-python>=4.7
+# Conda users: conda install -c conda-forge opencv  (skip this line)
+opencv-python-headless>=4.7
 pycocotools>=2.0
