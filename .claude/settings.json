@@ -1,0 +1,11 @@
+{
+  "env": {
+    "PYTHON": "/opt/conda/bin/python3",
+    "PYTHONPATH": "/workspace/Training/Training_Segmentation"
+  },
+  "permissions": {
+    "additionalDirectories": [
+      "/workspace/Training/Training_Segmentation"
+    ]
+  }
+}

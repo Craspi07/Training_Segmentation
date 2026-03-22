@@ -21,11 +21,11 @@ dependencies = [
     "tqdm>=4.65",
     "matplotlib>=3.7",
     "scipy>=1.10",
-    # opencv-python-headless is listed here so dependency scanners recognise the
-    # cv2 import; the package includes scipy fallbacks and works without it.
-    # Conda users should instead: conda install -c conda-forge opencv
-    # and then install this package with --no-deps or override the dep.
-    "opencv-python-headless>=4.7",
+    # opencv-python provides the cv2 module used in cellpose_converter,
+    # visualization, and ome_loader. Scipy fallbacks exist so the package
+    # still functions when cv2 is replaced by a conda opencv build.
+    # Conda users: conda install -c conda-forge opencv  (replaces this dep)
+    "opencv-python>=4.7",
 ]
 
 [project.optional-dependencies]
