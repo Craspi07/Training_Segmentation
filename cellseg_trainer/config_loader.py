@@ -144,7 +144,11 @@ def override_from_args(config: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
         parts = key.split(".")
         d = config
         for part in parts[:-1]:
-            d = d.setdefault(part, {})
+            existing = d.get(part)
+            if not isinstance(existing, dict):
+                # Replace a missing or non-dict intermediate node with a dict
+                d[part] = {}
+            d = d[part]
         d[parts[-1]] = value
     return config
 

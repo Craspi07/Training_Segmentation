@@ -81,7 +81,7 @@ def intensity_scale(
     """Randomly scale image intensity.
 
     Args:
-        image: Float image array.
+        image: Float or integer image array.
         mask: Mask (unchanged).
         scale_range: (min_scale, max_scale) for the multiplier.
 
@@ -89,7 +89,11 @@ def intensity_scale(
         Scaled (image, mask) pair.
     """
     scale = random.uniform(*scale_range)
-    return (image * scale).astype(image.dtype), mask
+    result = image.astype(np.float32) * scale
+    if np.issubdtype(image.dtype, np.integer):
+        info = np.iinfo(image.dtype)
+        result = np.clip(result, info.min, info.max)
+    return result.astype(image.dtype), mask
 
 
 def gaussian_noise(
@@ -100,15 +104,23 @@ def gaussian_noise(
     """Add Gaussian noise to the image.
 
     Args:
-        image: Float image array.
+        image: Float or integer image array.
         mask: Mask (unchanged).
-        std: Standard deviation of the noise relative to the image range.
+        std: Standard deviation of the noise as a fraction of the image value range.
 
     Returns:
         Noisy (image, mask) pair.
     """
-    noise = np.random.normal(0, std, image.shape).astype(image.dtype)
-    return image + noise, mask
+    img_f32 = image.astype(np.float32)
+    value_range = float(img_f32.max() - img_f32.min())
+    # Scale std relative to the actual data range so it has visible effect
+    noise_std = std * value_range if value_range > 0 else std
+    noise = np.random.normal(0.0, noise_std, image.shape).astype(np.float32)
+    result = img_f32 + noise
+    if np.issubdtype(image.dtype, np.integer):
+        info = np.iinfo(image.dtype)
+        result = np.clip(result, info.min, info.max)
+    return result.astype(image.dtype), mask
 
 
 def elastic_deformation(

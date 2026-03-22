@@ -7,6 +7,7 @@ and optionally retrains the model on newly labelled data.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import shutil
@@ -187,8 +188,8 @@ def self_train(
         _log("  Retraining model on merged dataset …")
         train_out = ensure_dir(iter_dir / "model")
 
-        # Update model weights to current checkpoint for fine-tuning
-        override = dict(cellseg_config)
+        # Deep-copy so we never mutate the caller's config dict
+        override = copy.deepcopy(cellseg_config)
         override.setdefault("MODEL", {})["WEIGHTS"] = str(current_model)
         override.setdefault("TRAIN", {})["FAST_FINETUNE"] = True
 
