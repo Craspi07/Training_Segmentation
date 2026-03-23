@@ -110,7 +110,8 @@ class SegmentationGUI(tk.Tk):
         full_cmd = ["docker", "exec", container] + cmd
         logger.info(f"docker exec: {' '.join(full_cmd)}")
         proc = subprocess.Popen(
-            full_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            full_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            encoding="utf-8", errors="replace",
         )
         for line in proc.stdout:
             logger.info(line.rstrip())
@@ -1893,6 +1894,23 @@ class SegmentationGUI(tk.Tk):
             self._d2_log_msg(f"[DEPS] All dependencies found in {src} ✓")
         return status
 
+    def _d2_fix_numpy(self, container: str, python: str) -> None:
+        """Downgrade numpy to <2.0 inside the container if a 2.x version is found."""
+        check = subprocess.run(
+            ["docker", "exec", container, python, "-c",
+             "import numpy as np, sys; sys.exit(0 if tuple(int(x) for x in np.__version__.split('.')[:2]) < (2, 0) else 1)"],
+            capture_output=True, timeout=30,
+        )
+        if check.returncode == 0:
+            return  # already <2.0, nothing to do
+        self._d2_log_msg("[DEPS] NumPy ≥2.0 detected in container — downgrading to <2.0 …")
+        pip = python.replace("python3", "pip3").replace("python", "pip")
+        rc = self._run_docker_cmd(container, [pip, "install", "numpy<2.0", "--quiet"])
+        if rc == 0:
+            self._d2_log_msg("[DEPS] NumPy downgraded successfully ✓")
+        else:
+            self._d2_log_msg("[DEPS] WARNING: NumPy downgrade failed — training may crash")
+
     def _d2_show_install_guide(self) -> None:
         """Open a popup window with step-by-step installation instructions."""
         win = tk.Toplevel(self)
@@ -2058,6 +2076,7 @@ After installation, click 'Check Dependencies' to verify all packages are found.
                 container = self.docker_container.get().strip()
                 if container:
                     python = self.d2_docker_python.get().strip()
+                    self._d2_fix_numpy(container, python)
                     cmd = [
                         python, "-m", "cellseg_trainer", "convert",
                         "--images",      self._to_container_path(image_dir),
@@ -2132,6 +2151,7 @@ After installation, click 'Check Dependencies' to verify all packages are found.
                 weights = self.d2_weights_path.get().strip()
                 if container:
                     python = self.d2_docker_python.get().strip()
+                    self._d2_fix_numpy(container, python)
                     cmd = [
                         python, "-m", "cellseg_trainer", "train",
                         "--dataset",    self._to_container_path(dataset),
