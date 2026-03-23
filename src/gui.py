@@ -27,7 +27,7 @@ PROJECT_ROOT = SRC_DIR.parent
 sys.path.insert(0, str(SRC_DIR))
 
 # Default path to the project inside the Docker container
-_CONTAINER_DEFAULT_ROOT = "/workspace/Training_Segmentation"
+_CONTAINER_DEFAULT_ROOT = "/workspace/Training/Training_Segmentation"
 
 from rename_files import (
     list_image_files,
@@ -71,7 +71,7 @@ class SegmentationGUI(tk.Tk):
         self.docker_container = tk.StringVar(value=os.environ.get("DOCKER_CONTAINER", ""))
         self.container_root = tk.StringVar(value=os.environ.get("CONTAINER_PROJECT_ROOT", _CONTAINER_DEFAULT_ROOT))
         # Python interpreter inside the Detectron2 venv in Docker
-        self.d2_docker_python = tk.StringVar(value=os.environ.get("D2_DOCKER_PYTHON", "/delectron_enve/bin/python"))
+        self.d2_docker_python = tk.StringVar(value=os.environ.get("D2_DOCKER_PYTHON", "/opt/conda/bin/python3"))
         # Bind-mount mapping: Windows host folder → container folder
         # e.g. host = C:\Users\Windows\Documents\Segmentation  container = /workspace
         self.host_mount_path = tk.StringVar(value=os.environ.get("HOST_MOUNT_PATH", ""))
