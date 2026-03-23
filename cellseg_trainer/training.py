@@ -15,6 +15,40 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+# Keys that only appear in BioImage Model Zoo RDF files (never in Detectron2 configs)
+_BIOIMAGEIO_KEYS = {"format_version", "attachments", "rdf_source", "covers", "cite", "tags", "authors"}
+# At least one of these top-level keys must exist in a valid Detectron2 config
+_D2_REQUIRED_KEYS = {"MODEL", "SOLVER", "DATASETS", "DATALOADER", "INPUT", "TEST"}
+
+
+def _assert_detectron2_yaml(path: Path) -> None:
+    """Raise a descriptive ValueError if *path* is not a Detectron2 config."""
+    import yaml  # already a transitive dep of detectron2
+
+    try:
+        with open(path) as f:
+            data = yaml.safe_load(f) or {}
+    except Exception as exc:
+        raise ValueError(f"Cannot read '{path}': {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise ValueError(f"'{path}' is not a YAML mapping — not a Detectron2 config.")
+
+    keys = set(data.keys())
+    if keys & _BIOIMAGEIO_KEYS:
+        raise ValueError(
+            f"'{path}' looks like a BioImage Model Zoo RDF file "
+            f"(found keys: {sorted(keys & _BIOIMAGEIO_KEYS)}), "
+            "not a Detectron2 config.\n"
+            "Please select a proper Detectron2 YAML (must contain MODEL/SOLVER/DATASETS etc.)."
+        )
+    if not (keys & _D2_REQUIRED_KEYS):
+        raise ValueError(
+            f"'{path}' does not appear to be a Detectron2 config "
+            f"(none of {sorted(_D2_REQUIRED_KEYS)} found at top level).\n"
+            "Please select a valid Detectron2 YAML config file."
+        )
+
 
 # ---------------------------------------------------------------------------
 # Trainer class
@@ -128,6 +162,7 @@ def _train_worker(
     setup_logger()
 
     # --- Build Detectron2 config ---
+    _assert_detectron2_yaml(d2_config_path)
     cfg = get_cfg()
     cfg.merge_from_file(str(d2_config_path))
 

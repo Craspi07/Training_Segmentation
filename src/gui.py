@@ -2139,6 +2139,14 @@ After installation, click 'Check Dependencies' to verify all packages are found.
             messagebox.showerror("Missing paths", "Detectron2 Config, Dataset Dir and Output Dir are required.")
             return
 
+        # Validate that the config file is a real Detectron2 YAML, not a BioImage RDF
+        try:
+            from cellseg_trainer.training import _assert_detectron2_yaml
+            _assert_detectron2_yaml(d2_config)
+        except Exception as exc:
+            messagebox.showerror("Invalid Detectron2 Config", str(exc))
+            return
+
         if not self._d2_assert_deps_or_warn():
             return
 
