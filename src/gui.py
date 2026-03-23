@@ -110,7 +110,8 @@ class SegmentationGUI(tk.Tk):
         full_cmd = ["docker", "exec", container] + cmd
         logger.info(f"docker exec: {' '.join(full_cmd)}")
         proc = subprocess.Popen(
-            full_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            full_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            encoding="utf-8", errors="replace",
         )
         for line in proc.stdout:
             logger.info(line.rstrip())
