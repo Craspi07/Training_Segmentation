@@ -80,6 +80,7 @@ class CellSegTrainer:
             launch(
                 _train_worker,
                 num_gpus_per_machine=gpus,
+                dist_url="auto",
                 args=(self.d2_config_path, self.cfg, dataset_dir, output_dir, amp, resume),
             )
         else:
