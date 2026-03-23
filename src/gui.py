@@ -1927,7 +1927,18 @@ Verify:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 2 — Install detectron2 dependencies
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+pip-based environments:
   pip install opencv-python pycocotools tifffile pyyaml scipy tqdm matplotlib
+
+Conda environments (run inside the container):
+  conda install -c conda-forge opencv pycocotools -y
+  pip install tifffile pyyaml scipy tqdm matplotlib
+
+If using Docker, run the above inside the container:
+  docker exec <container> /opt/conda/bin/python3 -m pip install opencv-python-headless pycocotools tifffile pyyaml scipy tqdm matplotlib
+
+Verify cv2:
+  docker exec <container> /opt/conda/bin/python3 -c "import cv2; print(cv2.__version__)"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 3 — Install detectron2 from source
