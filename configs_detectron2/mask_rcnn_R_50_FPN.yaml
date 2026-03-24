@@ -6,7 +6,7 @@
 # Pretrained on MS-COCO 2017; fine-tuned on your cell dataset.
 #
 # Key deviations from vanilla COCO defaults (from the paper):
-#   • Anchor sizes reduced to (4,9,17,31,64,127) for small cells
+#   • Anchor sizes reduced to (4,9,17,31,64) for small cells
 #   • Anchor aspect ratios extended to (0.25,0.5,1,2,4)
 #   • Linear LR warmup, warmup factor 0.001, 1 000 warmup iters
 #   • Multi-scale training: shortest side ∈ {440,480,520,580,620}
