@@ -2139,18 +2139,6 @@ After installation, click 'Check Dependencies' to verify all packages are found.
             messagebox.showerror("Missing paths", "Detectron2 Config, Dataset Dir and Output Dir are required.")
             return
 
-        # Resolve config: auto-detect Detectron2 YAML from a BioImage RDF if needed
-        try:
-            from cellseg_trainer.training import resolve_d2_config
-            resolved = str(resolve_d2_config(d2_config))
-            if resolved != d2_config:
-                self._d2_log_msg(f"[CONFIG] Auto-resolved Detectron2 config: {resolved}")
-                self.d2_config_path.set(resolved)
-                d2_config = resolved
-        except Exception as exc:
-            messagebox.showerror("Invalid Detectron2 Config", str(exc))
-            return
-
         if not self._d2_assert_deps_or_warn():
             return
 
