@@ -24,7 +24,7 @@ MODEL:
     IN_FEATURES: ["res2", "res3", "res4", "res5"]
   ANCHOR_GENERATOR:
     # Reduced anchor sizes for small cells (paper Table S3)
-    SIZES: [[4], [9], [17], [31], [64], [127]]
+    SIZES: [[4], [9], [17], [31], [64, 127]]
     ASPECT_RATIOS: [[0.25, 0.5, 1.0, 2.0, 4.0]]
   RPN:
     IN_FEATURES: ["p2", "p3", "p4", "p5", "p6"]
