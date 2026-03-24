@@ -21,33 +21,91 @@ _BIOIMAGEIO_KEYS = {"format_version", "attachments", "rdf_source", "covers", "ci
 _D2_REQUIRED_KEYS = {"MODEL", "SOLVER", "DATASETS", "DATALOADER", "INPUT", "TEST"}
 
 
-def _assert_detectron2_yaml(path: Path) -> None:
-    """Raise a descriptive ValueError if *path* is not a Detectron2 config."""
-    import yaml  # already a transitive dep of detectron2
-
+def _is_valid_d2_yaml(path: Path) -> bool:
+    """Return True if *path* is a readable Detectron2 YAML config."""
+    import yaml
     try:
         with open(path) as f:
             data = yaml.safe_load(f) or {}
+        if not isinstance(data, dict):
+            return False
+        keys = set(data.keys())
+        return bool(keys & _D2_REQUIRED_KEYS) and not bool(keys & _BIOIMAGEIO_KEYS)
+    except Exception:
+        return False
+
+
+def resolve_d2_config(path: str | Path) -> Path:
+    """Resolve a Detectron2 config path, auto-detecting it from a BioImage RDF if needed.
+
+    If *path* is already a valid Detectron2 YAML, returns it unchanged.
+    If *path* is a BioImage Model Zoo ``rdf.yaml``, searches the ``attachments``
+    section and the same directory for a Detectron2 config and returns it.
+
+    Raises:
+        ValueError: If no valid Detectron2 config can be found.
+    """
+    import yaml
+    path = Path(path)
+
+    if _is_valid_d2_yaml(path):
+        return path
+
+    # Check if it is a BioImage RDF
+    try:
+        with open(path) as f:
+            rdf = yaml.safe_load(f) or {}
     except Exception as exc:
         raise ValueError(f"Cannot read '{path}': {exc}") from exc
 
-    if not isinstance(data, dict):
-        raise ValueError(f"'{path}' is not a YAML mapping — not a Detectron2 config.")
+    keys = set(rdf.keys()) if isinstance(rdf, dict) else set()
+    is_rdf = bool(keys & _BIOIMAGEIO_KEYS)
 
-    keys = set(data.keys())
-    if keys & _BIOIMAGEIO_KEYS:
+    candidates: list[Path] = []
+
+    if is_rdf:
+        # 1. Collect YAML files listed in attachments
+        attachments = rdf.get("attachments", {})
+        # BioImage Zoo format_version <0.5: attachments is a dict with 'files' list
+        # format_version >=0.5: attachments is a list of dicts with 'source'
+        if isinstance(attachments, dict):
+            for item in attachments.get("files", []):
+                p = path.parent / str(item)
+                if p.suffix in {".yaml", ".yml"} and p != path:
+                    candidates.append(p)
+        elif isinstance(attachments, list):
+            for item in attachments:
+                src = item.get("source", "") if isinstance(item, dict) else str(item)
+                p = path.parent / str(src)
+                if p.suffix in {".yaml", ".yml"} and p != path:
+                    candidates.append(p)
+
+    # 2. Fall back: scan the same directory for any valid D2 config
+    for p in sorted(path.parent.glob("*.yaml")) + sorted(path.parent.glob("*.yml")):
+        if p != path and p not in candidates:
+            candidates.append(p)
+
+    for candidate in candidates:
+        if candidate.exists() and _is_valid_d2_yaml(candidate):
+            logger.info("Auto-resolved Detectron2 config from '%s' → '%s'", path.name, candidate.name)
+            return candidate
+
+    if is_rdf:
         raise ValueError(
-            f"'{path}' looks like a BioImage Model Zoo RDF file "
-            f"(found keys: {sorted(keys & _BIOIMAGEIO_KEYS)}), "
-            "not a Detectron2 config.\n"
-            "Please select a proper Detectron2 YAML (must contain MODEL/SOLVER/DATASETS etc.)."
+            f"'{path}' is a BioImage Model Zoo RDF file, and no Detectron2 config "
+            f"was found alongside it in '{path.parent}'.\n"
+            "Expected a 'config.yaml' file with MODEL/SOLVER keys in the same folder."
         )
-    if not (keys & _D2_REQUIRED_KEYS):
-        raise ValueError(
-            f"'{path}' does not appear to be a Detectron2 config "
-            f"(none of {sorted(_D2_REQUIRED_KEYS)} found at top level).\n"
-            "Please select a valid Detectron2 YAML config file."
-        )
+    raise ValueError(
+        f"'{path}' does not appear to be a Detectron2 config "
+        f"(none of {sorted(_D2_REQUIRED_KEYS)} found at top level).\n"
+        "Please select a valid Detectron2 YAML config file."
+    )
+
+
+def _assert_detectron2_yaml(path: Path) -> None:
+    """Raise a descriptive ValueError if *path* is not a Detectron2 config (no auto-resolve)."""
+    resolve_d2_config(path)  # raises on failure, result discarded — caller uses original path
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +220,7 @@ def _train_worker(
     setup_logger()
 
     # --- Build Detectron2 config ---
-    _assert_detectron2_yaml(d2_config_path)
+    d2_config_path = resolve_d2_config(d2_config_path)
     cfg = get_cfg()
     cfg.merge_from_file(str(d2_config_path))
 
