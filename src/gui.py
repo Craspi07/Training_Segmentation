@@ -83,16 +83,29 @@ class SegmentationGUI(tk.Tk):
     def _to_wsl_path(self, path: str) -> str:
         """Translate a Windows filesystem path to its WSL equivalent (/mnt/<drive>/...).
 
-        Uses wslpath for accuracy; falls back to manual drive-letter mapping.
-        Already-POSIX paths are returned unchanged.
+        Uses wslpath for accuracy; falls back to manual mapping.
+        Handles three cases:
+          1. Already a POSIX path  (/home/user/...)              returned as-is
+          2. UNC WSL path          (\\\\wsl$\\Ubuntu\\home\\...) stripped to /home/...
+          3. Windows drive path    (C:\\\\Users\\\\...)          mapped to /mnt/c/Users/...
         """
         if not path:
             return path
         path_str = str(path).strip()
-        if path_str.startswith("/"):
-            return path_str  # already a POSIX/WSL path
 
-        # Ask WSL to translate (most accurate)
+        # Already a POSIX/WSL path — project lives in WSL home (/home/user/...)
+        if path_str.startswith("/"):
+            return path_str
+
+        # UNC path pointing into WSL filesystem: \\wsl$\Distro\home\... or \\wsl.localhost\...
+        # Strip the \\wsl$\<Distro> or \\wsl.localhost\<Distro> prefix
+        if path_str.startswith("\\\\wsl") or path_str.startswith("//wsl"):
+            parts = path_str.replace("\\", "/").lstrip("/").split("/", 2)
+            # parts = ["wsl$", "<Distro>", "home/user/..."]  or ["wsl.localhost", "<Distro>", ...]
+            if len(parts) >= 3:
+                return "/" + parts[2]
+
+        # Ask WSL to translate (handles both C:\ paths and \\wsl$\ paths)
         try:
             wsl_cmd = ["wsl"]
             distro = self.wsl_distro.get().strip()

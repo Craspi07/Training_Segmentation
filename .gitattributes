@@ -1,0 +1,37 @@
+# Normalize line endings on all platforms.
+# text=auto  lets git decide; eol= overrides per pattern.
+
+*           text=auto
+
+# Shell scripts must always have LF (CRLF breaks bash in WSL)
+*.sh        text eol=lf
+
+# Python source — LF everywhere
+*.py        text eol=lf
+
+# Config / data files — LF everywhere
+*.yaml      text eol=lf
+*.yml       text eol=lf
+*.json      text eol=lf
+*.toml      text eol=lf
+*.cfg       text eol=lf
+*.ini       text eol=lf
+*.txt       text eol=lf
+*.md        text eol=lf
+
+# Windows batch files must have CRLF (cmd.exe requires it)
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+
+# Binary files — no line-ending conversion
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.tif   binary
+*.tiff  binary
+*.npy   binary
+*.npz   binary
+*.pt    binary
+*.pth   binary
+*.pkl   binary
+*.zip   binary
