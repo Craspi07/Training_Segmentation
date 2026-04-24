@@ -2,24 +2,42 @@
 :: ============================================================
 :: run_gui.bat  —  Launch the Cellpose Segmentation GUI on Windows
 ::
+:: REQUIREMENTS:
+::   - Python 3.9+ installed on Windows  (for the GUI itself)
+::   - WSL 2 with Ubuntu installed        (for ML workloads)
+::       → Install: wsl --install          (PowerShell as Admin)
+::
 :: USAGE:
-::   1. Double-click this file,  OR
+::   1. Double-click this file, OR
 ::   2. From cmd.exe:
-::        set DOCKER_CONTAINER=<your_container_name_or_id>
+::        set WSL_DISTRO_NAME_OVERRIDE=Ubuntu   (optional — uses default distro)
+::        set WSL_PYTHON=python3                 (optional — default: python3)
 ::        run_gui.bat
 ::
-:: The GUI will open on Windows (no X server needed).
-:: Training and inference are delegated to the Docker container
-:: that has Detectron2 / Cellpose installed.
-::
-:: If DOCKER_CONTAINER is not set you can also type the container
-:: name directly inside the GUI (Training tab → Docker field).
+:: The GUI window opens on Windows.
+:: Training/inference are delegated to WSL (Linux), which has
+:: GPU access via the NVIDIA WSL 2 driver.
+:: No Docker required.
 :: ============================================================
 
-:: Install minimal Windows requirements (only pyyaml is needed for the GUI itself)
+:: ---- Verify WSL is available -----------------------------------------------
+wsl --status >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo  ERROR: WSL does not appear to be installed or enabled.
+    echo.
+    echo  Fix: Open PowerShell as Administrator and run:
+    echo      wsl --install
+    echo  Then restart your computer and re-run this script.
+    echo.
+    pause
+    exit /b 1
+)
+
+:: ---- Install minimal Windows-side dependencies (GUI only) ------------------
 pip show pyyaml >nul 2>&1 || pip install pyyaml
 
-:: Launch the GUI
+:: ---- Launch the GUI --------------------------------------------------------
 python "%~dp0src\gui.py"
 
 pause
