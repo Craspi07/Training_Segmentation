@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
 # setup_wsl.sh — Install all ML dependencies inside WSL 2 (Ubuntu)
 #
-# Run this script from INSIDE WSL, from the project directory:
+# Run this script from INSIDE WSL.
+#
+# If the project is in your WSL home directory (most common):
+#   cd ~/Training_Segmentation
+#   bash setup_wsl.sh
+#
+# If the project is on a Windows drive (e.g. C:\):
 #   cd /mnt/c/path/to/Training_Segmentation
 #   bash setup_wsl.sh
+#
+# To open WSL: press Win+R, type wsl, press Enter
+#              OR search "Ubuntu" in the Start menu
 #
 # What it does:
 #   1. Installs system packages (build tools, libGL, …)
