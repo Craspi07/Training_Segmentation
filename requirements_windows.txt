@@ -1,4 +1,10 @@
 # Minimal requirements to run the GUI on Windows.
-# Heavy ML packages (cellpose, detectron2, torch) are NOT needed here —
-# they run inside the Docker container.
+#
+# The heavy ML stack (cellpose, detectron2, torch, opencv, …) runs inside
+# WSL 2 (Windows Subsystem for Linux) — NOT on the Windows Python side.
+# Install it there with:
+#
+#   setup_wsl.sh   (run from inside WSL)
+#
+# Only PyYAML is needed here so the GUI can read/write YAML config files.
 pyyaml

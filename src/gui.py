@@ -26,8 +26,6 @@ SRC_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SRC_DIR.parent
 sys.path.insert(0, str(SRC_DIR))
 
-# Default path to the project inside the Docker container
-_CONTAINER_DEFAULT_ROOT = "/workspace/Training/Training_Segmentation"
 
 from rename_files import (
     list_image_files,
@@ -67,48 +65,72 @@ class SegmentationGUI(tk.Tk):
         self.yaml_config: dict = {}
         self.yaml_config_path: str = ""
 
-        # Docker settings for running ML on Windows
-        self.docker_container = tk.StringVar(value=os.environ.get("DOCKER_CONTAINER", ""))
-        self.container_root = tk.StringVar(value=os.environ.get("CONTAINER_PROJECT_ROOT", _CONTAINER_DEFAULT_ROOT))
-        # Python interpreter inside the Detectron2 venv in Docker
-        self.d2_docker_python = tk.StringVar(value=os.environ.get("D2_DOCKER_PYTHON", "/opt/conda/bin/python3"))
-        # Bind-mount mapping: Windows host folder → container folder
-        # e.g. host = C:\Users\Windows\Documents\Segmentation  container = /workspace
-        self.host_mount_path = tk.StringVar(value=os.environ.get("HOST_MOUNT_PATH", ""))
-        self.container_mount_path = tk.StringVar(value=os.environ.get("CONTAINER_MOUNT_PATH", "/workspace"))
+        # WSL settings for running ML on Windows via WSL 2
+        self.use_wsl = tk.BooleanVar(value=True)
+        # WSL distro name — leave blank to use the default distro
+        self.wsl_distro = tk.StringVar(value=os.environ.get("WSL_DISTRO_NAME_OVERRIDE", ""))
+        # Python executable inside WSL (e.g. "python3" or "/home/user/.venv/bin/python3")
+        self.wsl_python = tk.StringVar(value=os.environ.get("WSL_PYTHON", "python3"))
+        # WSL path of this project — auto-detected via wslpath, can be overridden
+        self.wsl_project_root_var = tk.StringVar(value=os.environ.get("WSL_PROJECT_ROOT", ""))
 
         self._build_menu()
         self._build_tabs()
         self._setup_logging()
         self._poll_log_queue()
 
-    # ----- Docker helpers -----
-    def _to_container_path(self, path: str) -> str:
-        """Translate a local filesystem path to the equivalent container path.
+    # ----- WSL helpers -----
+    def _to_wsl_path(self, path: str) -> str:
+        """Translate a Windows filesystem path to its WSL equivalent (/mnt/<drive>/...).
 
-        Translation order:
-        1. If path is under the bind-mount host folder, map it to the container mount folder.
-        2. If path is under PROJECT_ROOT, map it to container_root.
-        3. Fall back to replacing backslashes (may still fail if not mounted).
+        Uses wslpath for accuracy; falls back to manual drive-letter mapping.
+        Already-POSIX paths are returned unchanged.
         """
-        host_mount = self.host_mount_path.get().strip()
-        container_mount = self.container_mount_path.get().strip()
-        if host_mount and container_mount:
-            try:
-                rel = Path(path).relative_to(Path(host_mount))
-                return (Path(container_mount) / rel).as_posix()
-            except ValueError:
-                pass
-        try:
-            rel = Path(path).relative_to(PROJECT_ROOT)
-            return (Path(self.container_root.get()) / rel).as_posix()
-        except ValueError:
-            return str(path).replace("\\", "/")
+        if not path:
+            return path
+        path_str = str(path).strip()
+        if path_str.startswith("/"):
+            return path_str  # already a POSIX/WSL path
 
-    def _run_docker_cmd(self, container: str, cmd: list) -> int:
-        """Run a command inside the Docker container, streaming output to logger."""
-        full_cmd = ["docker", "exec", container] + cmd
-        logger.info(f"docker exec: {' '.join(full_cmd)}")
+        # Ask WSL to translate (most accurate)
+        try:
+            wsl_cmd = ["wsl"]
+            distro = self.wsl_distro.get().strip()
+            if distro:
+                wsl_cmd += ["-d", distro]
+            wsl_cmd += ["--", "wslpath", "-u", path_str]
+            result = subprocess.run(wsl_cmd, capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception:
+            pass
+
+        # Manual fallback: C:\Users\foo\bar → /mnt/c/Users/foo/bar
+        try:
+            from pathlib import PureWindowsPath
+            p = PureWindowsPath(path_str)
+            if p.drive:
+                drive_letter = p.drive[0].lower()
+                rest = path_str[len(p.drive):].replace("\\", "/")
+                return f"/mnt/{drive_letter}{rest}"
+        except Exception:
+            pass
+
+        return path_str.replace("\\", "/")
+
+    def _make_wsl_cmd(self, cmd: list) -> list:
+        """Build a WSL command list, optionally targeting a specific distro."""
+        wsl_cmd = ["wsl"]
+        distro = self.wsl_distro.get().strip()
+        if distro:
+            wsl_cmd += ["-d", distro]
+        wsl_cmd += ["--"] + [str(c) for c in cmd]
+        return wsl_cmd
+
+    def _run_wsl_cmd(self, cmd: list) -> int:
+        """Run a command inside WSL, streaming output line-by-line to the logger."""
+        full_cmd = self._make_wsl_cmd(cmd)
+        logger.info(f"WSL: {' '.join(full_cmd)}")
         proc = subprocess.Popen(
             full_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             encoding="utf-8", errors="replace",
@@ -117,6 +139,11 @@ class SegmentationGUI(tk.Tk):
             logger.info(line.rstrip())
         proc.wait()
         return proc.returncode
+
+    def _get_wsl_project_root(self) -> str:
+        """Return the WSL path of the project root (user override or auto-detected)."""
+        custom = self.wsl_project_root_var.get().strip()
+        return custom if custom else self._to_wsl_path(str(PROJECT_ROOT))
 
     # ----- Menu bar -----
     def _build_menu(self):
@@ -1242,14 +1269,16 @@ class SegmentationGUI(tk.Tk):
     def _build_train_tab(self):
         tab = self.tab_train
 
-        # Docker settings (used when running GUI on Windows)
-        docker_frame = ttk.LabelFrame(tab, text="Docker (Windows only — leave blank if running inside container)", padding=6)
-        docker_frame.pack(fill=tk.X, padx=10, pady=(10, 0))
+        # WSL settings (used when running GUI on Windows)
+        wsl_frame = ttk.LabelFrame(tab, text="WSL (Windows only — uncheck when running natively on Linux)", padding=6)
+        wsl_frame.pack(fill=tk.X, padx=10, pady=(10, 0))
 
-        ttk.Label(docker_frame, text="Container name/ID:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
-        ttk.Entry(docker_frame, textvariable=self.docker_container, width=30).grid(row=0, column=1, sticky=tk.W)
-        ttk.Label(docker_frame, text="  Project root in container:").grid(row=0, column=2, sticky=tk.W, padx=(10, 5))
-        ttk.Entry(docker_frame, textvariable=self.container_root, width=35).grid(row=0, column=3, sticky=tk.W)
+        ttk.Checkbutton(wsl_frame, text="Use WSL for ML workloads", variable=self.use_wsl).grid(
+            row=0, column=0, sticky=tk.W, padx=(0, 10))
+        ttk.Label(wsl_frame, text="Distro (blank = default):").grid(row=0, column=1, sticky=tk.W, padx=(10, 4))
+        ttk.Entry(wsl_frame, textvariable=self.wsl_distro, width=14).grid(row=0, column=2, sticky=tk.W)
+        ttk.Label(wsl_frame, text="  Python:").grid(row=0, column=3, sticky=tk.W, padx=(10, 4))
+        ttk.Entry(wsl_frame, textvariable=self.wsl_python, width=16).grid(row=0, column=4, sticky=tk.W)
 
         # Controls
         ctrl_frame = ttk.Frame(tab)
@@ -1334,23 +1363,22 @@ class SegmentationGUI(tk.Tk):
                 self._read_params_into_config()
                 configs_to_run.append(self.yaml_config_path)
 
-            container = self.docker_container.get().strip()
-
             for cfg_path in configs_to_run:
                 if self._stop_event.is_set():
                     logger.info("Training stopped by user.")
                     break
                 logger.info(f"Loading config: {cfg_path}")
 
-                if container:
-                    # Running GUI on Windows — delegate to Docker container
-                    container_cfg = self._to_container_path(cfg_path)
-                    container_script = self.container_root.get().rstrip("/") + "/src/train_cellpose.py"
-                    rc = self._run_docker_cmd(container, ["python", container_script, "--config", container_cfg])
+                if self.use_wsl.get():
+                    # Running GUI on Windows — delegate to WSL
+                    python = self.wsl_python.get().strip()
+                    wsl_script = self._get_wsl_project_root().rstrip("/") + "/src/train_cellpose.py"
+                    wsl_cfg = self._to_wsl_path(cfg_path)
+                    rc = self._run_wsl_cmd([python, wsl_script, "--config", wsl_cfg])
                     if rc != 0:
-                        raise RuntimeError(f"docker exec exited with code {rc}")
+                        raise RuntimeError(f"WSL process exited with code {rc}")
                 else:
-                    # Running inside container — import directly
+                    # Running natively on Linux/inside WSL shell — import directly
                     from train_cellpose import load_config, train_cellpose_model
                     cfg = load_config(cfg_path)
                     train_cellpose_model(cfg)
@@ -1486,17 +1514,17 @@ class SegmentationGUI(tk.Tk):
 
         def worker():
             try:
-                container = self.docker_container.get().strip()
-                if container:
-                    container_script = self.container_root.get().rstrip("/") + "/src/evaluate.py"
-                    rc = self._run_docker_cmd(container, [
-                        "python", container_script,
-                        "--model", self._to_container_path(model),
-                        "--image-dir", self._to_container_path(img_dir),
-                        "--output-dir", self._to_container_path(output),
+                if self.use_wsl.get():
+                    python = self.wsl_python.get().strip()
+                    wsl_script = self._get_wsl_project_root().rstrip("/") + "/src/evaluate.py"
+                    rc = self._run_wsl_cmd([
+                        python, wsl_script,
+                        "--model",      self._to_wsl_path(model),
+                        "--image-dir",  self._to_wsl_path(img_dir),
+                        "--output-dir", self._to_wsl_path(output),
                     ])
                     if rc != 0:
-                        raise RuntimeError(f"docker exec exited with code {rc}")
+                        raise RuntimeError(f"WSL process exited with code {rc}")
                     self.log_queue.put("__EVAL_DONE__Inference complete")
                 else:
                     from evaluate import run_inference
@@ -1530,18 +1558,20 @@ class SegmentationGUI(tk.Tk):
 
         def worker():
             try:
-                container = self.docker_container.get().strip()
-                if container:
+                if self.use_wsl.get():
                     if not self.yaml_config_path:
-                        raise RuntimeError("Save the config file first (File → Save Config) before running full evaluation via Docker.")
-                    container_script = self.container_root.get().rstrip("/") + "/src/evaluate.py"
-                    rc = self._run_docker_cmd(container, [
-                        "python", container_script,
-                        "--config", self._to_container_path(self.yaml_config_path),
-                        "--model", self._to_container_path(model),
+                        raise RuntimeError(
+                            "Save the config file first (File → Save Config) before running full evaluation via WSL."
+                        )
+                    python = self.wsl_python.get().strip()
+                    wsl_script = self._get_wsl_project_root().rstrip("/") + "/src/evaluate.py"
+                    rc = self._run_wsl_cmd([
+                        python, wsl_script,
+                        "--config", self._to_wsl_path(self.yaml_config_path),
+                        "--model",  self._to_wsl_path(model),
                     ])
                     if rc != 0:
-                        raise RuntimeError(f"docker exec exited with code {rc}")
+                        raise RuntimeError(f"WSL process exited with code {rc}")
                     self.log_queue.put("__EVAL_DONE__Full evaluation complete (see log for metrics)")
                 else:
                     from evaluate import evaluate_model
@@ -1604,28 +1634,28 @@ class SegmentationGUI(tk.Tk):
         PAD = {"padx": 8, "pady": 4}
 
         # ----------------------------------------------------------------
-        # Section 0a: Docker connection
+        # Section 0a: WSL connection
         # ----------------------------------------------------------------
-        docker_frame = ttk.LabelFrame(scroll_frame, text="Docker Connection (required on Windows)", padding=8)
-        docker_frame.pack(fill=tk.X, padx=10, pady=6)
+        wsl_conn_frame = ttk.LabelFrame(scroll_frame, text="WSL Connection (required on Windows)", padding=8)
+        wsl_conn_frame.pack(fill=tk.X, padx=10, pady=6)
 
-        ttk.Label(docker_frame, text="Container name/ID:").grid(row=0, column=0, sticky=tk.W, padx=(0, 4))
-        ttk.Entry(docker_frame, textvariable=self.docker_container, width=25).grid(row=0, column=1, sticky=tk.W)
-        ttk.Label(docker_frame, text="  Python (venv):").grid(row=0, column=2, sticky=tk.W, padx=(12, 4))
-        ttk.Entry(docker_frame, textvariable=self.d2_docker_python, width=32).grid(row=0, column=3, sticky=tk.W)
-        ttk.Label(docker_frame, text="  Container project root:").grid(row=0, column=4, sticky=tk.W, padx=(12, 4))
-        ttk.Entry(docker_frame, textvariable=self.container_root, width=30).grid(row=0, column=5, sticky=tk.W)
+        ttk.Checkbutton(wsl_conn_frame, text="Use WSL", variable=self.use_wsl).grid(
+            row=0, column=0, sticky=tk.W, padx=(0, 8))
+        ttk.Label(wsl_conn_frame, text="Distro (blank = default):").grid(row=0, column=1, sticky=tk.W, padx=(8, 4))
+        ttk.Entry(wsl_conn_frame, textvariable=self.wsl_distro, width=14).grid(row=0, column=2, sticky=tk.W)
+        ttk.Label(wsl_conn_frame, text="  Python:").grid(row=0, column=3, sticky=tk.W, padx=(10, 4))
+        ttk.Entry(wsl_conn_frame, textvariable=self.wsl_python, width=20).grid(row=0, column=4, sticky=tk.W)
 
-        ttk.Label(docker_frame, text="Host data folder (Windows):").grid(row=1, column=0, sticky=tk.W, padx=(0, 4), pady=(6, 0))
-        ttk.Entry(docker_frame, textvariable=self.host_mount_path, width=40).grid(row=1, column=1, columnspan=2, sticky=tk.W, pady=(6, 0))
-        ttk.Label(docker_frame, text="  → Container folder:").grid(row=1, column=3, sticky=tk.W, padx=(12, 4), pady=(6, 0))
-        ttk.Entry(docker_frame, textvariable=self.container_mount_path, width=20).grid(row=1, column=4, sticky=tk.W, pady=(6, 0))
+        ttk.Label(wsl_conn_frame, text="WSL project root (auto-detected):").grid(
+            row=1, column=0, columnspan=2, sticky=tk.W, padx=(0, 4), pady=(6, 0))
+        ttk.Entry(wsl_conn_frame, textvariable=self.wsl_project_root_var, width=60).grid(
+            row=1, column=2, columnspan=3, sticky=tk.W, pady=(6, 0))
 
         ttk.Label(
-            docker_frame,
-            text="Bind mount: set Host data folder to the Windows path you mounted (e.g. C:\\Users\\Windows\\Documents\\Segmentation)  "
-                 "and Container folder to where it appears in Docker (e.g. /workspace).  "
-                 "Get container name with  docker ps.",
+            wsl_conn_frame,
+            text="Windows drives are auto-mounted in WSL at /mnt/<drive>/ (e.g. C:\\Users\\... → /mnt/c/Users/...).\n"
+                 "Leave 'WSL project root' blank to auto-detect via wslpath.  "
+                 "Uncheck 'Use WSL' when running the GUI natively on Linux.",
             foreground="gray",
             wraplength=900,
             justify=tk.LEFT,
@@ -1839,8 +1869,8 @@ class SegmentationGUI(tk.Tk):
     def _d2_check_deps(self) -> dict[str, bool]:
         """Import-check each required package and update status labels.
 
-        When a Docker container is configured the check runs inside it using
-        the configured venv Python.  Otherwise it checks the local environment.
+        When 'Use WSL' is checked the check runs inside WSL using the configured
+        Python.  Otherwise it checks the local (Linux/WSL shell) environment.
 
         Returns:
             Dict mapping package name to availability bool.
@@ -1848,16 +1878,17 @@ class SegmentationGUI(tk.Tk):
         deps = ["torch", "torchvision", "detectron2", "cv2", "pycocotools", "tifffile"]
         status: dict[str, bool] = {}
 
-        container = self.docker_container.get().strip()
-        python = self.d2_docker_python.get().strip() if container else None
+        use_wsl = self.use_wsl.get()
+        python = self.wsl_python.get().strip()
 
-        first_error: str | None = None  # capture first docker error for diagnosis
+        first_error: str | None = None
 
         for dep in deps:
-            if container and python:
+            if use_wsl:
                 try:
+                    wsl_cmd = self._make_wsl_cmd([python, "-c", f"import {dep}"])
                     result = subprocess.run(
-                        ["docker", "exec", container, python, "-c", f"import {dep}"],
+                        wsl_cmd,
                         capture_output=True, timeout=15, text=True,
                     )
                     ok = result.returncode == 0
@@ -1866,7 +1897,10 @@ class SegmentationGUI(tk.Tk):
                         first_error = err if err else f"exit code {result.returncode}"
                 except FileNotFoundError:
                     ok = False
-                    first_error = first_error or "'docker' command not found — is Docker Desktop running and in PATH?"
+                    first_error = first_error or (
+                        "'wsl' command not found — is WSL 2 installed? "
+                        "Run: wsl --install  (PowerShell as Administrator)"
+                    )
                 except Exception as exc:
                     ok = False
                     first_error = first_error or str(exc)
@@ -1884,28 +1918,30 @@ class SegmentationGUI(tk.Tk):
                 lbl.config(text="✓" if ok else "✗", fg="green" if ok else "red")
 
         missing = [k for k, v in status.items() if not v]
-        src = f"Docker ({container})" if container else "local environment"
+        distro = self.wsl_distro.get().strip()
+        src = f"WSL ({distro or 'default distro'})" if use_wsl else "local environment"
         if missing:
             self._d2_log_msg(f"[DEPS] Failed in {src}: {', '.join(missing)}")
             if first_error:
                 self._d2_log_msg(f"[DEPS] Error detail: {first_error}")
-                self._d2_log_msg("[DEPS] → Check container name (docker ps) and venv Python path.")
+                self._d2_log_msg("[DEPS] → Click 'Show Install Guide' for step-by-step WSL setup.")
         else:
             self._d2_log_msg(f"[DEPS] All dependencies found in {src} ✓")
         return status
 
-    def _d2_fix_numpy(self, container: str, python: str) -> None:
-        """Downgrade numpy to <2.0 inside the container if a 2.x version is found."""
-        check = subprocess.run(
-            ["docker", "exec", container, python, "-c",
-             "import numpy as np, sys; sys.exit(0 if tuple(int(x) for x in np.__version__.split('.')[:2]) < (2, 0) else 1)"],
-            capture_output=True, timeout=30,
-        )
+    def _d2_fix_numpy(self) -> None:
+        """Downgrade numpy to <2.0 in WSL if a 2.x version is found."""
+        python = self.wsl_python.get().strip()
+        check_cmd = self._make_wsl_cmd([
+            python, "-c",
+            "import numpy as np, sys; sys.exit(0 if tuple(int(x) for x in np.__version__.split('.')[:2]) < (2, 0) else 1)",
+        ])
+        check = subprocess.run(check_cmd, capture_output=True, timeout=30)
         if check.returncode == 0:
             return  # already <2.0, nothing to do
-        self._d2_log_msg("[DEPS] NumPy ≥2.0 detected in container — downgrading to <2.0 …")
+        self._d2_log_msg("[DEPS] NumPy ≥2.0 detected in WSL — downgrading to <2.0 …")
         pip = python.replace("python3", "pip3").replace("python", "pip")
-        rc = self._run_docker_cmd(container, [pip, "install", "numpy<2.0", "--quiet"])
+        rc = self._run_wsl_cmd([pip, "install", "numpy<2.0", "--quiet"])
         if rc == 0:
             self._d2_log_msg("[DEPS] NumPy downgraded successfully ✓")
         else:
@@ -1922,99 +1958,128 @@ class SegmentationGUI(tk.Tk):
         text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         guide = """\
-DETECTRON2 INSTALLATION GUIDE
-==============================
+DETECTRON2 INSTALLATION GUIDE — WSL 2
+=======================================
 
 Detectron2 must be built from source — it is NOT available on PyPI.
-Follow the steps below for your environment.
+This guide uses Windows Subsystem for Linux 2 (WSL 2) for GPU-accelerated
+training.  All commands below run INSIDE WSL unless noted otherwise.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 1 — Install PyTorch with CUDA
+STEP 0 — Install WSL 2  (Windows only, run in PowerShell as Administrator)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Visit https://pytorch.org/get-started/locally/ and select your OS / CUDA version.
+  wsl --install
 
-Example for CUDA 11.8:
-  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
-
-Example for CUDA 12.1:
-  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+This installs Ubuntu by default and enables WSL 2.
+Restart when prompted, then open the Ubuntu terminal.
 
 Verify:
-  python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+  wsl --list --verbose          ← must show VERSION 2
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 2 — Install detectron2 dependencies
+STEP 1 — Enable GPU support in WSL 2
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-pip-based environments:
-  pip install opencv-python pycocotools tifffile pyyaml scipy tqdm matplotlib
+Install/update NVIDIA drivers on the Windows host (NOT inside WSL):
+  https://developer.nvidia.com/cuda/wsl
 
-Conda environments (run inside the container):
-  conda install -c conda-forge opencv pycocotools -y
-  pip install tifffile pyyaml scipy tqdm matplotlib
+Minimum driver version: 470.x for WSL GPU support.
 
-If using Docker, run the above inside the container:
-  docker exec <container> /opt/conda/bin/python3 -m pip install opencv-python-headless pycocotools tifffile pyyaml scipy tqdm matplotlib
+Verify GPU is visible from inside WSL:
+  nvidia-smi
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 2 — Install Python & PyTorch in WSL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Inside WSL (Ubuntu):
+  sudo apt update && sudo apt install -y python3 python3-pip python3-venv git
+
+Install PyTorch with CUDA (choose version matching nvidia-smi output):
+  # CUDA 12.1
+  pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+  # CUDA 11.8
+  pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+
+Verify GPU is available from Python:
+  python3 -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 3 — Install detectron2 dependencies in WSL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Inside WSL:
+  sudo apt install -y build-essential python3-dev libgl1-mesa-glx libglib2.0-0
+  pip3 install opencv-python-headless pycocotools tifffile pyyaml scipy tqdm matplotlib
 
 Verify cv2:
-  docker exec <container> /opt/conda/bin/python3 -c "import cv2; print(cv2.__version__)"
+  python3 -c "import cv2; print(cv2.__version__)"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 3 — Install detectron2 from source
+STEP 4 — Install detectron2 from source in WSL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Option A — Build from GitHub (recommended, always up-to-date):
-  pip install 'git+https://github.com/facebookresearch/detectron2.git'
+  pip3 install 'git+https://github.com/facebookresearch/detectron2.git'
 
-Option B — Pre-built wheels (faster, matches specific torch+CUDA):
-  # Replace cu118 and torch2.1.0 with your actual versions
-  pip install detectron2 -f \\
-    https://dl.fbaipublicfiles.com/detectron2/wheels/cu118/torch2.1.0/index.html
+Option B — Pre-built wheels (faster; replace versions to match your setup):
+  pip3 install detectron2 -f \\
+    https://dl.fbaipublicfiles.com/detectron2/wheels/cu121/torch2.1.0/index.html
 
   Wheel index: https://dl.fbaipublicfiles.com/detectron2/wheels/
   Available: cu117, cu118, cu121 × torch 1.x / 2.x
 
-Option C — Conda (if using conda environment):
-  conda install -c conda-forge detectron2
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 5 — Install cellseg_trainer in WSL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Windows drives are automatically accessible in WSL at /mnt/<drive>/.
+Example: C:\\Users\\Alice\\Training_Segmentation  →  /mnt/c/Users/Alice/Training_Segmentation
+
+Inside WSL, navigate to the project and install in editable mode:
+  cd /mnt/c/path/to/Training_Segmentation
+  pip3 install -e .
+
+The 'WSL project root' field in this GUI is auto-detected via wslpath.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 4 — Install cellseg_trainer package
+STEP 6 — Verify everything works
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-From the project root directory:
-  pip install -e .
+Click 'Check Dependencies' in the Dependencies section above.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 5 — Verify everything works
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  python -c "import detectron2; print('detectron2', detectron2.__version__)"
-  python -c "from detectron2.config import get_cfg; print('config OK')"
-  python -c "from detectron2.engine import DefaultTrainer; print('trainer OK')"
+Or manually from inside WSL:
+  python3 -c "import detectron2; print('detectron2', detectron2.__version__)"
+  python3 -c "from detectron2.config import get_cfg; print('config OK')"
+  python3 -c "from detectron2.engine import DefaultTrainer; print('trainer OK')"
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 COMMON ERRORS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+'wsl' command not found  (Windows)
+  → Open PowerShell as Administrator and run: wsl --install
+
+GPU not visible in WSL (nvidia-smi fails)
+  → Update NVIDIA Windows driver to ≥470.x, then restart WSL:
+      wsl --shutdown && wsl
+
 ModuleNotFoundError: No module named 'detectron2'
-  → Follow Step 3 above.
+  → Follow Step 4 above.
 
-CUDA error / device mismatch
-  → Make sure torch and detectron2 were built against the same CUDA version.
-  → Run: python -c "import torch; print(torch.version.cuda)"
+CUDA version mismatch
+  → Run: python3 -c "import torch; print(torch.version.cuda)"
+  → Re-install torch/detectron2 with the matching cu1XX tag.
 
-ImportError: libGL.so.1: cannot open shared object file
-  → On headless Linux: sudo apt install libgl1-mesa-glx libglib2.0-0
+ImportError: libGL.so.1
+  → Inside WSL: sudo apt install libgl1-mesa-glx libglib2.0-0
 
-error: command 'gcc' failed — build error from source
-  → Install build tools: sudo apt install build-essential python3-dev
-  → Make sure gcc and g++ are available: gcc --version
+error: command 'gcc' failed
+  → Inside WSL: sudo apt install build-essential python3-dev
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FOR YOUR 2-GPU (2 × 24 GB) SETUP
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Recommended install command for 2x NVIDIA 24 GB GPUs (check your CUDA version first):
+WSL 2 exposes all host GPUs automatically.  Check inside WSL:
+  nvidia-smi   ← both GPUs should appear
 
-  nvidia-smi   ← note the 'CUDA Version' in the top-right corner
+Set 'Num GPUs' to 2 in the Training section.
+Detectron2 multi-GPU training uses PyTorch DistributedDataParallel.
 
-Then install the matching PyTorch + detectron2 combination.
-
-After installation, click 'Check Dependencies' to verify all packages are found.
+After installation, click 'Check Dependencies' to verify all packages.
 """
         text.insert(tk.END, guide)
         text.config(state=tk.DISABLED)
@@ -2073,24 +2138,23 @@ After installation, click 'Check Dependencies' to verify all packages are found.
 
         def worker():
             try:
-                container = self.docker_container.get().strip()
-                if container:
-                    python = self.d2_docker_python.get().strip()
-                    self._d2_fix_numpy(container, python)
+                if self.use_wsl.get():
+                    python = self.wsl_python.get().strip()
+                    self._d2_fix_numpy()
                     cmd = [
                         python, "-m", "cellseg_trainer", "convert",
-                        "--images",      self._to_container_path(image_dir),
-                        "--masks",       self._to_container_path(mask_dir),
-                        "--output",      self._to_container_path(output_dir),
+                        "--images",      self._to_wsl_path(image_dir),
+                        "--masks",       self._to_wsl_path(mask_dir),
+                        "--output",      self._to_wsl_path(output_dir),
                         "--mask-suffix", self.d2_mask_suffix.get().strip(),
                         "--train-split", str(self.d2_train_split.get()),
                         "--workers",     str(self.d2_conv_workers.get()),
                         "--patch-size",  str(self.d2_patch_size.get()),
                         "--overlap",     str(self.d2_patch_overlap.get()),
                     ]
-                    rc = self._run_docker_cmd(container, cmd)
+                    rc = self._run_wsl_cmd(cmd)
                     if rc != 0:
-                        raise RuntimeError(f"docker exec exited with code {rc}")
+                        raise RuntimeError(f"WSL process exited with code {rc}")
                     self.log_queue.put("__D2_DONE__Dataset conversion complete")
                 else:
                     sys.path.insert(0, str(PROJECT_ROOT))
@@ -2147,24 +2211,23 @@ After installation, click 'Check Dependencies' to verify all packages are found.
 
         def worker():
             try:
-                container = self.docker_container.get().strip()
                 weights = self.d2_weights_path.get().strip()
-                if container:
-                    python = self.d2_docker_python.get().strip()
-                    self._d2_fix_numpy(container, python)
+                if self.use_wsl.get():
+                    python = self.wsl_python.get().strip()
+                    self._d2_fix_numpy()
                     cmd = [
                         python, "-m", "cellseg_trainer", "train",
-                        "--dataset",    self._to_container_path(dataset),
-                        "--d2-config",  self._to_container_path(d2_config),
-                        "--output",     self._to_container_path(output),
-                        "--max-iter",   str(self.d2_max_iter.get()),
-                        "--lr",         str(self.d2_base_lr.get()),
-                        "--num-classes",str(self.d2_num_classes.get()),
-                        "--num-gpus",   str(self.d2_num_gpus.get()),
-                        "--patch-size", str(self.d2_patch_size.get() or 512),
+                        "--dataset",     self._to_wsl_path(dataset),
+                        "--d2-config",   self._to_wsl_path(d2_config),
+                        "--output",      self._to_wsl_path(output),
+                        "--max-iter",    str(self.d2_max_iter.get()),
+                        "--lr",          str(self.d2_base_lr.get()),
+                        "--num-classes", str(self.d2_num_classes.get()),
+                        "--num-gpus",    str(self.d2_num_gpus.get()),
+                        "--patch-size",  str(self.d2_patch_size.get() or 512),
                     ]
                     if weights:
-                        cmd += ["--weights", self._to_container_path(weights)]
+                        cmd += ["--weights", self._to_wsl_path(weights)]
                     cmd.append("--multi-gpu" if self.d2_multi_gpu.get() else "--no-multi-gpu")
                     cmd.append("--amp" if self.d2_amp.get() else "--no-amp")
                     if self.d2_freeze_backbone.get():
@@ -2173,10 +2236,10 @@ After installation, click 'Check Dependencies' to verify all packages are found.
                         cmd.append("--fast-finetune")
                     if self.d2_resume.get():
                         cmd.append("--resume")
-                    rc = self._run_docker_cmd(container, cmd)
+                    rc = self._run_wsl_cmd(cmd)
                     if rc != 0:
-                        raise RuntimeError(f"docker exec exited with code {rc}")
-                    self.log_queue.put(f"__D2_DONE__Training complete → {self._to_container_path(output)}")
+                        raise RuntimeError(f"WSL process exited with code {rc}")
+                    self.log_queue.put(f"__D2_DONE__Training complete → {self._to_wsl_path(output)}")
                 else:
                     sys.path.insert(0, str(PROJECT_ROOT))
                     from cellseg_trainer.config_loader import DEFAULTS, override_from_args
@@ -2232,15 +2295,14 @@ After installation, click 'Check Dependencies' to verify all packages are found.
 
         def worker():
             try:
-                container = self.docker_container.get().strip()
-                if container:
-                    python = self.d2_docker_python.get().strip()
+                if self.use_wsl.get():
+                    python = self.wsl_python.get().strip()
                     cmd = [
                         python, "-m", "cellseg_trainer", "predict",
-                        "--model",        self._to_container_path(weights),
-                        "--d2-config",    self._to_container_path(d2_config),
-                        "--images",       self._to_container_path(image_dir),
-                        "--output",       self._to_container_path(output_dir),
+                        "--model",        self._to_wsl_path(weights),
+                        "--d2-config",    self._to_wsl_path(d2_config),
+                        "--images",       self._to_wsl_path(image_dir),
+                        "--output",       self._to_wsl_path(output_dir),
                         "--score-thresh", str(self.d2_score_thresh.get()),
                         "--device",       self.d2_device.get(),
                     ]
@@ -2250,10 +2312,10 @@ After installation, click 'Check Dependencies' to verify all packages are found.
                         cmd.append("--no-overlay")
                     if not self.d2_out_json.get():
                         cmd.append("--no-json")
-                    rc = self._run_docker_cmd(container, cmd)
+                    rc = self._run_wsl_cmd(cmd)
                     if rc != 0:
-                        raise RuntimeError(f"docker exec exited with code {rc}")
-                    self.log_queue.put(f"__D2_DONE__Inference complete → {self._to_container_path(output_dir)}")
+                        raise RuntimeError(f"WSL process exited with code {rc}")
+                    self.log_queue.put(f"__D2_DONE__Inference complete → {self._to_wsl_path(output_dir)}")
                 else:
                     sys.path.insert(0, str(PROJECT_ROOT))
                     from cellseg_trainer.inference import run_inference
@@ -2304,25 +2366,24 @@ After installation, click 'Check Dependencies' to verify all packages are found.
 
         def worker():
             try:
-                container = self.docker_container.get().strip()
-                if container:
-                    python = self.d2_docker_python.get().strip()
+                if self.use_wsl.get():
+                    python = self.wsl_python.get().strip()
                     cmd = [
                         python, "-m", "cellseg_trainer", "self-train",
-                        "--dataset",      self._to_container_path(dataset),
-                        "--model",        self._to_container_path(weights),
-                        "--d2-config",    self._to_container_path(d2_config),
-                        "--unlabelled",   self._to_container_path(unlabelled),
-                        "--output",       self._to_container_path(output_dir),
-                        "--iterations",   str(self.d2_al_iterations.get()),
-                        "--pseudo-thresh",str(self.d2_pseudo_thresh.get()),
+                        "--dataset",       self._to_wsl_path(dataset),
+                        "--model",         self._to_wsl_path(weights),
+                        "--d2-config",     self._to_wsl_path(d2_config),
+                        "--unlabelled",    self._to_wsl_path(unlabelled),
+                        "--output",        self._to_wsl_path(output_dir),
+                        "--iterations",    str(self.d2_al_iterations.get()),
+                        "--pseudo-thresh", str(self.d2_pseudo_thresh.get()),
                     ]
                     if self.d2_suggest_only.get():
                         cmd.append("--suggest-only")
-                    rc = self._run_docker_cmd(container, cmd)
+                    rc = self._run_wsl_cmd(cmd)
                     if rc != 0:
-                        raise RuntimeError(f"docker exec exited with code {rc}")
-                    self.log_queue.put(f"__D2_DONE__Self-training complete → {self._to_container_path(output_dir)}")
+                        raise RuntimeError(f"WSL process exited with code {rc}")
+                    self.log_queue.put(f"__D2_DONE__Self-training complete → {self._to_wsl_path(output_dir)}")
                 else:
                     sys.path.insert(0, str(PROJECT_ROOT))
                     from cellseg_trainer.config_loader import DEFAULTS
